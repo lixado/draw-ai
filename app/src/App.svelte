@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
-  import { Eraser, Expand, RotateCcw, RotateCw, Save } from 'lucide-svelte'
+  import { Bot, Eraser, Expand, Layers3, RotateCcw, RotateCw, Save } from 'lucide-svelte'
   import getStroke from 'perfect-freehand'
   import DrawingCanvas from './lib/components/DrawingCanvas.svelte'
   import BrushSelector from './lib/components/BrushSelector.svelte'
@@ -49,7 +49,6 @@
   let isColorMenuOpen = false
   let isBrushMenuOpen = false
   let isSaveMenuOpen = false
-  let currentBrushLabel = 'Ink'
   let currentHueColor = '#ff0000'
   let colorMenuRoot: HTMLDivElement | null = null
   let brushMenuRoot: HTMLDivElement | null = null
@@ -80,7 +79,6 @@
     { id: 'pixel', label: 'Pixel', preview: '[]' },
     { id: 'ribbon', label: 'Ribbon', preview: '≈≈≈' }
   ]
-  $: currentBrushLabel = brushStyles.find((b) => b.id === brushStyle)?.label ?? 'Ink'
   const brushStyleOptions: Record<BrushStyle, Parameters<typeof getStroke>[1]> = {
     pencil: {
       thinning: 0.85,
@@ -534,6 +532,12 @@
     }
   }
 
+  const stopSuggestionGeneration = () => {
+    suggestionRequestId += 1
+    loadingSuggestions = false
+    modelStatus = 'idle'
+  }
+
   const redoLast = async () => {
     const lastUndone = undoneStack[undoneStack.length - 1]
     if (!lastUndone) return
@@ -798,7 +802,7 @@
       {#if paletteSuggestions.length > 0}
         <section class="palette-panel">
           <header>
-            <h2>AI Palette</h2>
+            <h2><Bot size={13} /> AI Palette</h2>
           </header>
           <div class="dots">
             {#each paletteSuggestions as color}
@@ -826,6 +830,7 @@
           {loadingSuggestions}
           {modelStatus}
           on:pick={((event) => applySuggestion(event.detail))}
+          on:stop={stopSuggestionGeneration}
         />
       </div>
     </aside>
@@ -918,7 +923,7 @@
       <div class="nav-right">
         <div class="picker layer-picker" bind:this={layerMenuRoot}>
           <button class="nav-icon" type="button" onclick={() => (showLayerMenu = !showLayerMenu)} title="Layers">
-            Layers
+            <Layers3 size={16} />
           </button>
           {#if showLayerMenu}
             <div class="save-dropdown layer-dropdown" role="menu" aria-label="Layer selector">

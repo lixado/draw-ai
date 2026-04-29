@@ -1,18 +1,28 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte'
+  import { Bot, LoaderCircle, Square } from 'lucide-svelte'
   import type { RedoSuggestion } from '../ai/suggestions'
 
   export let suggestions: RedoSuggestion[] = []
   export let loadingSuggestions = false
   export let modelStatus = 'idle'
 
-  const dispatch = createEventDispatcher<{ pick: RedoSuggestion }>()
+  const dispatch = createEventDispatcher<{ pick: RedoSuggestion; stop: void }>()
 </script>
 
 <aside class="panel">
   <header>
-    <h2>Redo</h2>
-    <span>{modelStatus}</span>
+    <h2><Bot size={14} /> Redo</h2>
+    {#if loadingSuggestions}
+      <div class="status-row">
+        <span class="spin"><LoaderCircle size={14} /></span>
+        <button class="stop-btn" type="button" onclick={() => dispatch('stop')} aria-label="Stop generation">
+          <Square size={11} />
+        </button>
+      </div>
+    {:else}
+      <span>{modelStatus}</span>
+    {/if}
   </header>
   {#if suggestions.length === 0}
     {#if loadingSuggestions}
@@ -53,8 +63,34 @@
   }
 
   h2 {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     margin: 0;
     font-size: 0.96rem;
+  }
+
+  .status-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .spin {
+    animation: spin 1s linear infinite;
+  }
+
+  .stop-btn {
+    width: 20px;
+    height: 20px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    background: #ffffff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: #334155;
   }
 
   header span {
@@ -95,5 +131,11 @@
     display: block;
     object-fit: cover;
     pointer-events: none;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 </style>

@@ -50,8 +50,8 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  background: #ffffff;
-  border-bottom: 1px solid #e2e8f0;
+  background: #a5a5a5;
+  border-bottom: 1px solid #7e7e80;
   padding: 4px 10px;
 }
 
@@ -81,6 +81,9 @@ body {
 }
 
 .palette-panel h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 0 0 8px;
   font-size: 0.92rem;
 }
@@ -174,7 +177,7 @@ body {
 .nav-title {
   font-weight: 800;
   font-size: 14px;
-  color: #0f172a;
+  color: #f8e9de;
   user-select: none;
   white-space: nowrap;
 }
@@ -476,8 +479,8 @@ body {
   width: 30px;
   height: 26px;
   border-radius: 10px;
-  border: 1px solid #cbd5e1;
-  background: #fff;
+  border: 1px solid #8c6b5d;
+  background: #fffaf6;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -490,8 +493,8 @@ body {
 }
 
 .nav-icon.active {
-  background: #0f172a;
-  border-color: #0f172a;
+  background: #2f1d16;
+  border-color: #2f1d16;
   color: #ffffff;
 }
 
@@ -500,7 +503,7 @@ body {
   padding: 0 10px;
   font-size: 12px;
   font-weight: 800;
-  color: #b91c1c;
+  color: #7f1d1d;
 }
 
 .group-title {

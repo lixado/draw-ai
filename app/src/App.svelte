@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
-  import { Bot, Eraser, Expand, Layers3, RotateCcw, RotateCw, Save } from 'lucide-svelte'
+  import { Bot, Eraser, Expand, Layers3, RotateCcw, RotateCw, Save, Trash2 } from 'lucide-svelte'
+  import JSZip from 'jszip'
   import getStroke from 'perfect-freehand'
+  import logoUrl from './assets/logo.png'
   import DrawingCanvas from './lib/components/DrawingCanvas.svelte'
   import BrushSelector from './lib/components/BrushSelector.svelte'
   import ModelSelector from './lib/components/ModelSelector.svelte'
@@ -67,17 +69,17 @@
   let paletteSuggestions: string[] = []
   let lastPaletteStrokeMark = 0
 
-  const brushStyles: Array<{ id: BrushStyle; label: string; preview: string }> = [
-    { id: 'pencil', label: 'Pencil', preview: '////' },
-    { id: 'ink', label: 'Ink', preview: '~~~' },
-    { id: 'marker', label: 'Marker', preview: '===' },
-    { id: 'airbrush', label: 'Airbrush', preview: '....' },
-    { id: 'calligraphy', label: 'Calligraphy', preview: '/\\/' },
-    { id: 'watercolor', label: 'Watercolor', preview: '~~.' },
-    { id: 'charcoal', label: 'Charcoal', preview: '###' },
-    { id: 'neon', label: 'Neon', preview: '***' },
-    { id: 'pixel', label: 'Pixel', preview: '[]' },
-    { id: 'ribbon', label: 'Ribbon', preview: '≈≈≈' }
+  const brushStyles: Array<{ id: BrushStyle; label: string }> = [
+    { id: 'pencil', label: 'Pencil' },
+    { id: 'ink', label: 'Ink' },
+    { id: 'marker', label: 'Marker' },
+    { id: 'airbrush', label: 'Airbrush' },
+    { id: 'calligraphy', label: 'Calligraphy' },
+    { id: 'watercolor', label: 'Watercolor' },
+    { id: 'charcoal', label: 'Charcoal' },
+    { id: 'neon', label: 'Neon' },
+    { id: 'pixel', label: 'Pixel' },
+    { id: 'ribbon', label: 'Ribbon' }
   ]
   const brushStyleOptions: Record<BrushStyle, Parameters<typeof getStroke>[1]> = {
     pencil: {
@@ -196,6 +198,9 @@
   }
 
   const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v))
+  const exitEraseMode = () => {
+    if (toolMode === 'erase') toolMode = 'draw'
+  }
 
   const updateHueFromPointer = (event: PointerEvent) => {
     if (!hueRingEl) return
@@ -207,6 +212,7 @@
     let deg = (Math.atan2(dy, dx) * 180) / Math.PI + 90
     if (deg < 0) deg += 360
     hue = deg
+    exitEraseMode()
   }
 
   const updateSvFromPointer = (event: PointerEvent) => {
@@ -216,6 +222,7 @@
     const y = clamp(event.clientY - rect.top, 0, rect.height)
     saturation = clamp(x / rect.width, 0, 1)
     value = clamp(1 - y / rect.height, 0, 1)
+    exitEraseMode()
   }
 
   const onHuePointerDown = (event: PointerEvent) => {
@@ -292,6 +299,10 @@
     activeLayerId = next
   }
 
+  const renameLayer = (layerId: string, name: string) => {
+    layers = layers.map((layer) => (layer.id === layerId ? { ...layer, name } : layer))
+  }
+
   const toggleLayerVisibility = (layerId: string) => {
     const layer = layers.find((l) => l.id === layerId)
     if (!layer) return
@@ -337,17 +348,23 @@
     }, [`M${first[0]},${first[1]}`]).join(' ')
   }
 
+  const WHITE_LAYER_PREVIEW_DATA_URI =
+    'data:image/svg+xml;utf8,' +
+    encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="220" height="120" viewBox="0 0 220 120"><rect width="220" height="120" fill="#ffffff"/><rect x="0.5" y="0.5" width="219" height="119" fill="none" stroke="#dbe5f0"/></svg>'
+    )
+
   const renderLayerPreview = (layerId: string): string => {
-    if (typeof document === 'undefined') return ''
+    if (typeof document === 'undefined') return WHITE_LAYER_PREVIEW_DATA_URI
     const layerStrokes = strokes.filter((s) => s.layerId === layerId)
-    if (layerStrokes.length === 0) return ''
+    if (layerStrokes.length === 0) return WHITE_LAYER_PREVIEW_DATA_URI
     const canvas = document.createElement('canvas')
     const width = 220
     const height = 120
     canvas.width = width
     canvas.height = height
     const pctx = canvas.getContext('2d')
-    if (!pctx) return ''
+    if (!pctx) return WHITE_LAYER_PREVIEW_DATA_URI
 
     pctx.fillStyle = '#ffffff'
     pctx.fillRect(0, 0, width, height)
@@ -402,13 +419,81 @@
     URL.revokeObjectURL(url)
   }
 
+  const pngBlobFromDataUrl = (dataUrl: string): Blob | null => {
+    const payload = dataUrl.split(',')[1]
+    if (!payload) return null
+    const bin = atob(payload)
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i)
+    return new Blob([bytes], { type: 'image/png' })
+  }
+
+  const buildLayerPngDataUrl = (layerId: string): string => {
+    if (typeof document === 'undefined') return ''
+    const canvas = document.createElement('canvas')
+    const width = Math.max(1, Math.floor(window.innerWidth))
+    const height = Math.max(1, Math.floor(window.innerHeight))
+    canvas.width = width
+    canvas.height = height
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return ''
+
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, width, height)
+
+    const layerStrokes = strokes.filter((s) => s.layerId === layerId)
+    for (const stroke of layerStrokes) {
+      const options = brushStyleOptions[stroke.style] ?? brushStyleOptions.ink
+      const outline = getStroke(stroke.points, { size: stroke.size, ...options })
+      const path = getPathFromStroke(outline as unknown as number[][])
+      if (!path) continue
+      const p = new Path2D(path)
+      ctx.save()
+      if (stroke.mode === 'erase') {
+        ctx.globalCompositeOperation = 'destination-out'
+        ctx.fillStyle = '#000000'
+      } else {
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.fillStyle = stroke.color
+      }
+      ctx.globalAlpha = stroke.opacity
+      ctx.fill(p)
+      ctx.restore()
+    }
+
+    return canvas.toDataURL('image/png')
+  }
+
   const saveAsPng = () => {
     const dataUrl = drawingCanvasRef?.getPngDataUrl?.()
     if (!dataUrl) return
-    const bin = atob(dataUrl.split(',')[1])
-    const bytes = new Uint8Array(bin.length)
-    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i)
-    downloadFile(`drawai-${Date.now()}.png`, new Blob([bytes], { type: 'image/png' }))
+    const blob = pngBlobFromDataUrl(dataUrl)
+    if (!blob) return
+    downloadFile(`drawai-${Date.now()}.png`, blob)
+    isSaveMenuOpen = false
+  }
+
+  const sanitizeLayerFileName = (name: string, fallback: string) => {
+    const cleaned = name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+    return cleaned || fallback
+  }
+
+  const saveEachLayerAsPng = async () => {
+    const stamp = Date.now()
+    const zip = new JSZip()
+    for (const layer of layers) {
+      const dataUrl = buildLayerPngDataUrl(layer.id)
+      const blob = pngBlobFromDataUrl(dataUrl)
+      if (!blob) continue
+      const safeLayerName = sanitizeLayerFileName(layer.name, layer.id)
+      zip.file(`${safeLayerName}.png`, blob)
+    }
+    const zipBlob = await zip.generateAsync({ type: 'blob' })
+    downloadFile(`drawai-layers-${stamp}.zip`, zipBlob)
     isSaveMenuOpen = false
   }
 
@@ -817,6 +902,7 @@
                   saturation = hsv.s
                   value = hsv.v
                   rememberColor(color)
+                  exitEraseMode()
                 }}
                 aria-label={`Palette color ${color}`}
               ></button>
@@ -880,7 +966,7 @@
           </button>
         {/if}
         <button class="nav-icon dangerText" type="button" onclick={clearAll} aria-label="Clear all" title="Clear">
-          Clear
+          <Trash2 size={16} />
         </button>
         <div class="picker save-picker" bind:this={saveMenuRoot}>
           <button
@@ -902,6 +988,9 @@
           {#if isSaveMenuOpen}
             <div class="save-dropdown" role="menu" aria-label="Save options">
               <button class="save-option-btn" type="button" onclick={saveAsPng}>PNG</button>
+              <button class="save-option-btn" type="button" onclick={saveEachLayerAsPng}>
+                Save each layer individually as PNG
+              </button>
               <button class="save-option-btn" type="button" onclick={saveAsSvg}>SVG</button>
             </div>
           {/if}
@@ -918,7 +1007,10 @@
         </select>
       </div>
 
-      <div class="nav-title" aria-hidden="true">DrawAI</div>
+      <div class="nav-title" aria-hidden="true">
+        <img class="nav-title-icon" src={logoUrl} alt="" />
+        <span>DrawAI</span>
+      </div>
 
       <div class="nav-right">
         <div class="picker layer-picker" bind:this={layerMenuRoot}>
@@ -927,24 +1019,39 @@
           </button>
           {#if showLayerMenu}
             <div class="save-dropdown layer-dropdown" role="menu" aria-label="Layer selector">
-              <button class="save-option-btn" type="button" onclick={addLayer}>+ Add Layer</button>
-              {#each layers as layer}
-                <div class="layer-card">
-                  <img class="layer-preview-image" src={renderLayerPreview(layer.id)} alt={`Preview of ${layer.name}`} />
-                  <div class="layer-row">
-                    <button class="save-option-btn" type="button" onclick={() => (activeLayerId = layer.id)}>
-                      {layer.name}
-                    </button>
-                    <label class="layer-check">
+              <div class="layer-list">
+                {#each layers as layer}
+                  <div class="layer-card">
+                    <img class="layer-preview-image" src={renderLayerPreview(layer.id)} alt={`Preview of ${layer.name}`} />
+                    <div class="layer-row">
+                      <button
+                        class="save-option-btn layer-select-btn"
+                        type="button"
+                        onclick={() => (activeLayerId = layer.id)}
+                        title="Select layer"
+                      >
+                        Use
+                      </button>
                       <input
-                        type="checkbox"
-                        checked={layer.visible}
-                        onchange={() => toggleLayerVisibility(layer.id)}
+                        class="layer-name-input"
+                        type="text"
+                        value={layer.name}
+                        maxlength="40"
+                        aria-label={`Layer name for ${layer.id}`}
+                        oninput={(event) => renameLayer(layer.id, (event.currentTarget as HTMLInputElement).value)}
                       />
-                    </label>
+                      <label class="layer-check">
+                        <input
+                          type="checkbox"
+                          checked={layer.visible}
+                          onchange={() => toggleLayerVisibility(layer.id)}
+                        />
+                      </label>
+                    </div>
                   </div>
-                </div>
-              {/each}
+                {/each}
+              </div>
+              <button class="save-option-btn layer-add-btn" type="button" onclick={addLayer}>+ Add Layer</button>
             </div>
           {/if}
         </div>
@@ -1007,6 +1114,7 @@
                         hue = hsv.h
                         saturation = hsv.s
                         value = hsv.v
+                        exitEraseMode()
                       }}
                       style={`background:${color}`}
                       aria-label={`Recent color ${color}`}
@@ -1029,6 +1137,7 @@
             }}
             onPick={(id) => {
               brushStyle = id
+              exitEraseMode()
               isBrushMenuOpen = false
             }}
           />

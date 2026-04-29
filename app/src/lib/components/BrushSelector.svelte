@@ -1,11 +1,23 @@
 <script lang="ts">
   import getStroke from 'perfect-freehand'
   import { onMount } from 'svelte'
+  import {
+    Brush,
+    Feather,
+    Highlighter,
+    Paintbrush,
+    PenLine,
+    Pencil,
+    Sparkles,
+    SprayCan,
+    Square,
+    Waves
+  } from 'lucide-svelte'
   import type { BrushStyle } from '../types'
 
   export let value: BrushStyle
   export let open = false
-  export let options: Array<{ id: BrushStyle; label: string; preview: string }> = []
+  export let options: Array<{ id: BrushStyle; label: string }> = []
 
   export let onToggle: () => void
   export let onPick: (id: BrushStyle) => void
@@ -46,6 +58,18 @@
   ] as [number, number, number][]
 
   let previewMap: Record<string, string> = {}
+  const brushIconMap: Record<BrushStyle, typeof Pencil> = {
+    pencil: Pencil,
+    ink: PenLine,
+    marker: Highlighter,
+    airbrush: SprayCan,
+    calligraphy: Feather,
+    watercolor: Waves,
+    charcoal: Brush,
+    neon: Sparkles,
+    pixel: Square,
+    ribbon: Paintbrush
+  }
   const buildPreview = (id: BrushStyle) => {
     if (typeof document === 'undefined') return ''
     const c = document.createElement('canvas')
@@ -74,13 +98,14 @@
 
 <div class="picker brush-picker">
   <button type="button" class="brush-swatch" aria-label="Selected brush style" aria-expanded={open} onclick={onToggle}>
-    Brush
+    <Paintbrush size={16} />
   </button>
 
   {#if open}
     <div class="brush-dropdown" role="menu" aria-label="Choose brush">
       <div class="brush-styles" role="list">
         {#each options as option}
+          {@const BrushIcon = brushIconMap[option.id] ?? Paintbrush}
           <button
             type="button"
             class="brush-style-btn"
@@ -88,6 +113,7 @@
             onclick={() => onPick(option.id)}
             aria-pressed={value === option.id}
           >
+            <span class="brush-icon"><BrushIcon size={14} /></span>
             <img class="brush-preview-img" src={previewMap[option.id]} alt="" />
             <span>{option.label}</span>
           </button>
@@ -104,6 +130,16 @@
     display: flex;
     align-items: center;
     gap: 10px;
+  }
+
+  .brush-icon {
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #334155;
+    flex: 0 0 auto;
   }
 
   .brush-preview-img {

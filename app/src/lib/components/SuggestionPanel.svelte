@@ -21,7 +21,7 @@
         </button>
       </div>
     {:else}
-      <span>{modelStatus}</span>
+      <span>{modelStatus === 'idle' ? 'ready' : modelStatus}</span>
     {/if}
   </header>
   {#if suggestions.length === 0}

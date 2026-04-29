@@ -1,0 +1,18 @@
+{
+  "models": [
+    {
+      "model": "llama-3.1-8b-instant",
+      "limits": {
+      "tpm": 6000,
+      "maxCompletionTokens": 120,
+      "tokenSafetyMargin": 300
+    },
+    "promptBudgeting": {
+      "estimatedCharsPerToken": 4,
+      "maxPointsPerStroke": 24,
+      "minCurrentStrokes": 8,
+      "minUndoneStrokes": 1
+    }
+    }
+  ]
+}

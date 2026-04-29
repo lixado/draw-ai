@@ -1,5 +1,6 @@
 import { getSuggestionTextGenerator, prewarmSuggestionTextGenerator } from './modelLoad'
 import parameterPromptTemplate from './promts/parameter-generation.md?raw'
+import groqConfig from './groq/groq-config.json'
 
 export type ParameterCandidate = {
   strokeCount?: number
@@ -23,6 +24,27 @@ export type ParameterProvider = {
 
 let providerWarningHandler: ((message: string) => void) | null = null
 
+type GroqModelConfig = {
+  model: string
+  limits: {
+    tpm: number
+    maxCompletionTokens: number
+    tokenSafetyMargin: number
+  }
+  promptBudgeting: {
+    estimatedCharsPerToken: number
+    maxPointsPerStroke: number
+    minCurrentStrokes: number
+    minUndoneStrokes: number
+  }
+}
+
+const activeGroqModel: GroqModelConfig = (groqConfig.models?.[0] as GroqModelConfig) ?? {
+  model: 'llama-3.1-8b-instant',
+  limits: { tpm: 6000, maxCompletionTokens: 120, tokenSafetyMargin: 300 },
+  promptBudgeting: { estimatedCharsPerToken: 4, maxPointsPerStroke: 24, minCurrentStrokes: 8, minUndoneStrokes: 1 }
+}
+
 export const setProviderWarningHandler = (handler: ((message: string) => void) | null) => {
   providerWarningHandler = handler
 }
@@ -44,6 +66,15 @@ const buildPrompt = ({ totalStrokes, undoneCount, maxStrokeCount }: ParameterPro
     .replaceAll('{totalStrokes}', String(totalStrokes))
     .replaceAll('{undoneCount}', String(undoneCount))
     .replaceAll('{nonce}', nonce)
+}
+
+const trimPromptToGroqLimit = (prompt: string): string => {
+  const charsPerToken = Math.max(1, activeGroqModel.promptBudgeting.estimatedCharsPerToken)
+  const promptTokenBudget =
+    activeGroqModel.limits.tpm - activeGroqModel.limits.maxCompletionTokens - activeGroqModel.limits.tokenSafetyMargin
+  const maxChars = Math.max(256, promptTokenBudget * charsPerToken)
+  if (prompt.length <= maxChars) return prompt
+  return `${prompt.slice(0, maxChars)}\n[trimmed-for-token-budget]`
 }
 
 const localModelProvider: ParameterProvider = {
@@ -69,7 +100,7 @@ const localModelProvider: ParameterProvider = {
 export const createGroqParameterProvider = (apiKey: string): ParameterProvider => ({
   generate: async ({ totalStrokes, undoneCount, maxStrokeCount }) => {
     if (!apiKey) return null
-    const prompt = buildPrompt({ totalStrokes, undoneCount, maxStrokeCount })
+    const prompt = trimPromptToGroqLimit(buildPrompt({ totalStrokes, undoneCount, maxStrokeCount }))
 
     try {
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -79,9 +110,9 @@ export const createGroqParameterProvider = (apiKey: string): ParameterProvider =
           Authorization: `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-          model: 'llama-3.1-8b-instant',
+          model: activeGroqModel.model,
           temperature: 0.35,
-          max_tokens: 120,
+          max_tokens: activeGroqModel.limits.maxCompletionTokens,
           messages: [
             {
               role: 'system',

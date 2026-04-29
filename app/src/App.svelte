@@ -1,0 +1,735 @@
+<script lang="ts">
+  import { onMount, tick } from 'svelte'
+  import { Eraser, Expand, RotateCcw, RotateCw, Save } from 'lucide-svelte'
+  import getStroke from 'perfect-freehand'
+  import DrawingCanvas from './lib/components/DrawingCanvas.svelte'
+  import ModelSelector from './lib/components/ModelSelector.svelte'
+  import SuggestionPanel from './lib/components/SuggestionPanel.svelte'
+  import type { BrushStyle, StrokeData } from './lib/types'
+  import {
+    generateUndoSuggestionsStream,
+    prewarmSuggestionModel,
+    type RedoSuggestion
+  } from './lib/ai/suggestions'
+  import {
+    createGroqParameterProvider,
+    resetParameterProvider,
+    setParameterProvider,
+    setProviderWarningHandler
+  } from './lib/ai/parameterProvider'
+
+  let strokes: StrokeData[] = []
+  let undoneStack: StrokeData[] = []
+  let undoneContext: StrokeData[] = []
+  let suggestions: RedoSuggestion[] = []
+  let loadingSuggestions = false
+  let modelStatus = 'idle'
+  let suggestionRequestId = 0
+  let showModelSelector = true
+  let showProviderWarning = false
+  let providerWarningMessage = ''
+  type ProviderMode = 'local' | 'groq'
+  const ENV_GROQ_API_KEY = (import.meta.env.VITE_GROQ_API_KEY ?? '').trim()
+  let providerMode: ProviderMode = 'local'
+  let groqApiKey = ''
+  const isIPad = /iPad|Macintosh/.test(navigator.userAgent) && 'ontouchend' in document
+  const MAX_UNDO_CONTEXT = 5
+
+  // Brush state (used by DrawingCanvas + toolbar)
+  const initialColor = '#0f172a'
+  let hue = 0
+  let saturation = 0
+  let value = 0
+  let brushColor = initialColor
+  let brushSize = 14
+  let brushOpacity = 1
+  let brushStyle: BrushStyle = 'pencil'
+  let toolMode: 'draw' | 'erase' = 'draw'
+  let isColorMenuOpen = false
+  let isBrushMenuOpen = false
+  let isSaveMenuOpen = false
+  let currentBrushLabel = 'Ink'
+  let currentHueColor = '#ff0000'
+  let colorMenuRoot: HTMLDivElement | null = null
+  let brushMenuRoot: HTMLDivElement | null = null
+  let saveMenuRoot: HTMLDivElement | null = null
+  let drawingCanvasRef: { getPngDataUrl?: () => string } | null = null
+  let hueRingEl: HTMLDivElement | null = null
+  let svSquareEl: HTMLDivElement | null = null
+  let hueDragging = false
+  let svDragging = false
+  const brushStyles: Array<{ id: BrushStyle; label: string }> = [
+    { id: 'pencil', label: 'Pencil' },
+    { id: 'ink', label: 'Ink' },
+    { id: 'marker', label: 'Marker' }
+  ]
+  $: currentBrushLabel = brushStyles.find((b) => b.id === brushStyle)?.label ?? 'Ink'
+  const brushStyleOptions: Record<BrushStyle, Parameters<typeof getStroke>[1]> = {
+    pencil: {
+      thinning: 0.85,
+      smoothing: 0.45,
+      streamline: 0.2,
+      simulatePressure: false,
+      easing: (t: number) => t * (2 - t)
+    },
+    ink: {
+      thinning: 0.65,
+      smoothing: 0.65,
+      streamline: 0.4,
+      simulatePressure: false,
+      easing: (t: number) => t * t
+    },
+    marker: {
+      thinning: 0.2,
+      smoothing: 0.8,
+      streamline: 0.55,
+      simulatePressure: false,
+      easing: (t: number) => t * (2 - t)
+    }
+  }
+
+  const hexToRgb = (hex: string) => {
+    const cleaned = hex.replace('#', '')
+    const full = cleaned.length === 3 ? cleaned.split('').map((c) => `${c}${c}`).join('') : cleaned
+    const num = parseInt(full, 16)
+    return {
+      r: (num >> 16) & 255,
+      g: (num >> 8) & 255,
+      b: num & 255
+    }
+  }
+
+  const rgbToHex = (r: number, g: number, b: number) =>
+    `#${((1 << 24) + (Math.round(r) << 16) + (Math.round(g) << 8) + Math.round(b)).toString(16).slice(1)}`
+
+  const hsvToHex = (h: number, s: number, v: number) => {
+    const hh = ((h % 360) + 360) % 360
+    const c = v * s
+    const x = c * (1 - Math.abs(((hh / 60) % 2) - 1))
+    const m = v - c
+    let r = 0
+    let g = 0
+    let b = 0
+    if (hh < 60) [r, g, b] = [c, x, 0]
+    else if (hh < 120) [r, g, b] = [x, c, 0]
+    else if (hh < 180) [r, g, b] = [0, c, x]
+    else if (hh < 240) [r, g, b] = [0, x, c]
+    else if (hh < 300) [r, g, b] = [x, 0, c]
+    else [r, g, b] = [c, 0, x]
+    return rgbToHex((r + m) * 255, (g + m) * 255, (b + m) * 255)
+  }
+
+  const rgbToHsv = (r: number, g: number, b: number) => {
+    const rr = r / 255
+    const gg = g / 255
+    const bb = b / 255
+    const max = Math.max(rr, gg, bb)
+    const min = Math.min(rr, gg, bb)
+    const delta = max - min
+    let h = 0
+    if (delta !== 0) {
+      if (max === rr) h = 60 * (((gg - bb) / delta) % 6)
+      else if (max === gg) h = 60 * ((bb - rr) / delta + 2)
+      else h = 60 * ((rr - gg) / delta + 4)
+    }
+    if (h < 0) h += 360
+    const s = max === 0 ? 0 : delta / max
+    const v = max
+    return { h, s, v }
+  }
+
+  const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v))
+
+  const updateHueFromPointer = (event: PointerEvent) => {
+    if (!hueRingEl) return
+    const rect = hueRingEl.getBoundingClientRect()
+    const cx = rect.left + rect.width / 2
+    const cy = rect.top + rect.height / 2
+    const dx = event.clientX - cx
+    const dy = event.clientY - cy
+    let deg = (Math.atan2(dy, dx) * 180) / Math.PI + 90
+    if (deg < 0) deg += 360
+    hue = deg
+  }
+
+  const updateSvFromPointer = (event: PointerEvent) => {
+    if (!svSquareEl) return
+    const rect = svSquareEl.getBoundingClientRect()
+    const x = clamp(event.clientX - rect.left, 0, rect.width)
+    const y = clamp(event.clientY - rect.top, 0, rect.height)
+    saturation = clamp(x / rect.width, 0, 1)
+    value = clamp(1 - y / rect.height, 0, 1)
+  }
+
+  const onHuePointerDown = (event: PointerEvent) => {
+    hueDragging = true
+    updateHueFromPointer(event)
+  }
+
+  const onSvPointerDown = (event: PointerEvent) => {
+    event.stopPropagation()
+    svDragging = true
+    updateSvFromPointer(event)
+  }
+
+  const onWindowPointerMove = (event: PointerEvent) => {
+    if (hueDragging) updateHueFromPointer(event)
+    if (svDragging) updateSvFromPointer(event)
+  }
+
+  const onWindowPointerUp = () => {
+    hueDragging = false
+    svDragging = false
+  }
+
+  {
+    const rgb = hexToRgb(initialColor)
+    const hsv = rgbToHsv(rgb.r, rgb.g, rgb.b)
+    hue = hsv.h
+    saturation = hsv.s
+    value = hsv.v
+  }
+
+  $: brushColor = hsvToHex(hue, saturation, value)
+  $: currentHueColor = hsvToHex(hue, 1, 1)
+
+  const onWindowPointerDown = (event: PointerEvent) => {
+    const target = event.target as Node | null
+    if (isColorMenuOpen) {
+      const colorRoot = colorMenuRoot
+      if (colorRoot && target && colorRoot.contains(target)) return
+      isColorMenuOpen = false
+    }
+    if (isBrushMenuOpen) {
+      const brushRoot = brushMenuRoot
+      if (brushRoot && target && brushRoot.contains(target)) return
+      isBrushMenuOpen = false
+    }
+    if (isSaveMenuOpen) {
+      const saveRoot = saveMenuRoot
+      if (saveRoot && target && saveRoot.contains(target)) return
+      isSaveMenuOpen = false
+    }
+  }
+
+  const getPathFromStroke = (points: number[][]) => {
+    if (!points.length) return ''
+    const [first, ...rest] = points
+    return rest.reduce((acc, [x, y], i, arr) => {
+      const [nextX, nextY] = arr[(i + 1) % arr.length]
+      acc.push(`Q${x},${y} ${(x + nextX) / 2},${(y + nextY) / 2}`)
+      return acc
+    }, [`M${first[0]},${first[1]}`]).join(' ')
+  }
+
+  const downloadFile = (name: string, blob: Blob) => {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const saveAsPng = () => {
+    const dataUrl = drawingCanvasRef?.getPngDataUrl?.()
+    if (!dataUrl) return
+    const bin = atob(dataUrl.split(',')[1])
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i)
+    downloadFile(`drawai-${Date.now()}.png`, new Blob([bytes], { type: 'image/png' }))
+    isSaveMenuOpen = false
+  }
+
+  const buildSvgMarkup = () => {
+    if (strokes.length === 0) return ''
+    const allPoints = strokes.flatMap((s) => s.points)
+    const xs = allPoints.map((p) => p[0])
+    const ys = allPoints.map((p) => p[1])
+    const minX = Math.min(...xs)
+    const minY = Math.min(...ys)
+    const maxX = Math.max(...xs)
+    const maxY = Math.max(...ys)
+    const pad = 16
+    const width = Math.max(1, Math.ceil(maxX - minX + pad * 2))
+    const height = Math.max(1, Math.ceil(maxY - minY + pad * 2))
+
+    const paths = strokes
+      .map((stroke) => {
+        const shifted = stroke.points.map(([x, y, p]) => [x - minX + pad, y - minY + pad, p] as [number, number, number])
+        const options = brushStyleOptions[stroke.style] ?? brushStyleOptions.ink
+        const outline = getStroke(shifted, { size: stroke.size, ...options })
+        const d = getPathFromStroke(outline as unknown as number[][])
+        if (!d) return ''
+        const color = stroke.mode === 'erase' ? '#ffffff' : stroke.color
+        return `<path d="${d}" fill="${color}" fill-opacity="${stroke.opacity}" />`
+      })
+      .join('\n')
+
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#ffffff" />${paths}</svg>`
+  }
+
+  const saveAsSvg = () => {
+    const svg = buildSvgMarkup()
+    if (!svg) return
+    downloadFile(`drawai-${Date.now()}.svg`, new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }))
+    isSaveMenuOpen = false
+  }
+
+  const addStroke = (stroke: StrokeData) => {
+    strokes = [...strokes, stroke]
+    undoneStack = []
+    undoneContext = []
+    suggestions = []
+    loadingSuggestions = false
+    modelStatus = 'idle'
+    suggestionRequestId += 1
+  }
+
+  const applySuggestion = (suggestion: RedoSuggestion) => {
+    strokes = [...strokes, ...suggestion.strokes]
+    undoneStack = []
+    undoneContext = []
+    suggestions = []
+    loadingSuggestions = false
+    modelStatus = 'idle'
+    suggestionRequestId += 1
+  }
+
+  const regenerateSuggestions = async (context: StrokeData[], current: StrokeData[]) => {
+    const requestId = ++suggestionRequestId
+    if (context.length === 0) {
+      suggestions = []
+      loadingSuggestions = false
+      modelStatus = 'idle'
+      return
+    }
+    suggestions = []
+    loadingSuggestions = true
+    try {
+      const result = await generateUndoSuggestionsStream(context, current, {
+        onSuggestion: async (suggestion) => {
+          if (requestId !== suggestionRequestId) return
+          suggestions = [...suggestions, suggestion]
+          await tick()
+        }
+      })
+      if (requestId !== suggestionRequestId) return
+      modelStatus = result.modelStatus
+    } finally {
+      if (requestId === suggestionRequestId) {
+        loadingSuggestions = false
+      }
+    }
+  }
+
+  const undoAndSuggest = async () => {
+    if (strokes.length === 0) return
+    const requestId = ++suggestionRequestId
+    const removed = strokes[strokes.length - 1]
+    strokes = strokes.slice(0, -1)
+    undoneStack = [...undoneStack, removed]
+    const nextUndoneContext = [removed, ...undoneContext].slice(0, MAX_UNDO_CONTEXT)
+    undoneContext = nextUndoneContext
+    suggestions = []
+    loadingSuggestions = true
+    try {
+      const result = await generateUndoSuggestionsStream(nextUndoneContext, strokes, {
+        onSuggestion: async (suggestion) => {
+          if (requestId !== suggestionRequestId) return
+          suggestions = [...suggestions, suggestion]
+          await tick()
+        }
+      })
+      if (requestId !== suggestionRequestId) return
+      modelStatus = result.modelStatus
+    } finally {
+      if (requestId === suggestionRequestId) {
+        loadingSuggestions = false
+      }
+    }
+  }
+
+  const redoLast = async () => {
+    const lastUndone = undoneStack[undoneStack.length - 1]
+    if (!lastUndone) return
+    const nextUndoneStack = undoneStack.slice(0, -1)
+    const nextStrokes = [...strokes, lastUndone]
+    undoneStack = nextUndoneStack
+    strokes = nextStrokes
+    // Remove this stroke from AI undo context so suggestions keep prior undos.
+    const idx = undoneContext.findIndex((stroke) => stroke.id === lastUndone.id)
+    let nextContext = undoneContext
+    if (idx >= 0) {
+      nextContext = [...undoneContext.slice(0, idx), ...undoneContext.slice(idx + 1)]
+    }
+    undoneContext = nextContext
+    await regenerateSuggestions(nextContext, nextStrokes)
+  }
+
+  const enterFullscreen = async () => {
+    if (!document.fullscreenElement) {
+      await document.documentElement.requestFullscreen()
+    }
+  }
+
+  const clearAll = () => {
+    suggestionRequestId += 1
+    strokes = []
+    undoneStack = []
+    undoneContext = []
+    suggestions = []
+    loadingSuggestions = false
+    modelStatus = 'idle'
+  }
+
+  const onKeyDown = (event: KeyboardEvent) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+      event.preventDefault()
+      undoAndSuggest()
+    }
+    if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'z') {
+      event.preventDefault()
+      redoLast()
+    }
+  }
+
+  const applyProvider = async (mode: ProviderMode, apiKey?: string) => {
+    if (mode === 'groq') {
+      const key = (apiKey ?? groqApiKey).trim()
+      if (!key) {
+        showModelSelector = true
+        return
+      }
+      groqApiKey = key
+      setParameterProvider(createGroqParameterProvider(key))
+      providerMode = 'groq'
+      localStorage.setItem('drawai:model-provider', 'groq')
+      localStorage.setItem('drawai:groq-key', key)
+    } else {
+      resetParameterProvider()
+      providerMode = 'local'
+      localStorage.setItem('drawai:model-provider', 'local')
+    }
+    await prewarmSuggestionModel()
+  }
+
+  const onSelectModelProvider = async (event: CustomEvent<{ mode: 'local' } | { mode: 'groq'; apiKey: string }>) => {
+    const choice = event.detail
+    if (choice.mode === 'groq') await applyProvider('groq', choice.apiKey)
+    else await applyProvider('local')
+    showModelSelector = false
+  }
+
+  const onProviderDropdownChange = async (event: Event) => {
+    const nextMode = (event.currentTarget as HTMLSelectElement).value as ProviderMode
+    if (nextMode === 'groq' && !groqApiKey.trim()) {
+      showModelSelector = true
+      return
+    }
+    await applyProvider(nextMode)
+  }
+
+  const onProviderWarning = (message: string) => {
+    providerWarningMessage = message
+    showProviderWarning = true
+  }
+
+  onMount(() => {
+    setProviderWarningHandler(onProviderWarning)
+    const provider = localStorage.getItem('drawai:model-provider')
+    const storedKey = localStorage.getItem('drawai:groq-key') ?? ''
+    groqApiKey = ENV_GROQ_API_KEY || storedKey.trim()
+
+    if (ENV_GROQ_API_KEY) {
+      showModelSelector = false
+      void applyProvider('groq', ENV_GROQ_API_KEY)
+    } else if (provider === 'groq' && groqApiKey) {
+      showModelSelector = false
+      void applyProvider('groq', groqApiKey)
+    } else {
+      showModelSelector = true
+      providerMode = 'local'
+      resetParameterProvider()
+    }
+
+    return () => {
+      setProviderWarningHandler(null)
+    }
+  })
+</script>
+
+<svelte:window
+  onkeydown={onKeyDown}
+  onpointerdown={onWindowPointerDown}
+  onpointermove={onWindowPointerMove}
+  onpointerup={onWindowPointerUp}
+/>
+
+<main class="app-shell">
+  {#if showProviderWarning}
+    <div class="provider-warning-overlay">
+      <div class="provider-warning-card">
+        <h2>Model Warning</h2>
+        <p>{providerWarningMessage}</p>
+        <div class="provider-warning-actions">
+          <button
+            type="button"
+            onclick={async () => {
+              showProviderWarning = false
+              await applyProvider('local')
+            }}
+          >
+            Switch to Local
+          </button>
+          <button
+            type="button"
+            onclick={() => {
+              showProviderWarning = false
+              showModelSelector = true
+            }}
+          >
+            New API Key
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+  {#if showModelSelector}
+    <ModelSelector
+      initialMode={providerMode}
+      initialApiKey={groqApiKey}
+      on:select={onSelectModelProvider}
+    />
+  {/if}
+  <section class="workspace">
+    <div class="left-sliders" aria-label="Brush sliders">
+      <div class="slider-box size-slider">
+        <div class="slider-visual size-visual" aria-hidden="true"></div>
+        <input
+          class="vslider"
+          type="range"
+          min="4"
+          max="72"
+          step="0.1"
+          value={brushSize}
+          oninput={(e) => (brushSize = Number((e.currentTarget as HTMLInputElement).value))}
+          aria-label="Brush size"
+        />
+      </div>
+
+      <div class="slider-box opacity-slider">
+        <div
+          class="slider-visual"
+          style={`--from: rgba(${hexToRgb(brushColor).r}, ${hexToRgb(brushColor).g}, ${hexToRgb(brushColor).b}, 1); --to: rgba(${hexToRgb(brushColor).r}, ${hexToRgb(brushColor).g}, ${hexToRgb(brushColor).b}, 0);`}
+          aria-hidden="true"
+        ></div>
+        <input
+          class="vslider"
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value={brushOpacity}
+          oninput={(e) => (brushOpacity = Number((e.currentTarget as HTMLInputElement).value))}
+          aria-label="Brush opacity"
+        />
+      </div>
+    </div>
+
+    <DrawingCanvas
+      bind:this={drawingCanvasRef}
+      {strokes}
+      {brushSize}
+      {brushColor}
+      {brushOpacity}
+      {toolMode}
+      {brushStyle}
+      on:addstroke={(event) => addStroke(event.detail)}
+      on:penDoubleTapUndo={undoAndSuggest}
+    />
+    <div class="redo-panel">
+      <SuggestionPanel
+        {suggestions}
+        {loadingSuggestions}
+        {modelStatus}
+        on:pick={((event) => applySuggestion(event.detail))}
+      />
+    </div>
+
+    <header class="navbar" aria-label="Top toolbar">
+      <div class="nav-left">
+        <button
+          class="nav-icon"
+          type="button"
+          onclick={undoAndSuggest}
+          disabled={strokes.length === 0}
+          aria-label="Undo"
+          title="Undo"
+        >
+          <RotateCcw size={16} />
+        </button>
+        <button
+          class="nav-icon"
+          type="button"
+          onclick={redoLast}
+          disabled={undoneStack.length === 0}
+          aria-label="Redo last"
+          title="Redo"
+        >
+          <RotateCw size={16} />
+        </button>
+        <button
+          class="nav-icon"
+          type="button"
+          class:active={toolMode === 'erase'}
+          onclick={() => (toolMode = toolMode === 'erase' ? 'draw' : 'erase')}
+          aria-label="Eraser"
+          aria-pressed={toolMode === 'erase'}
+          title="Eraser"
+        >
+          <Eraser size={16} />
+        </button>
+        {#if isIPad}
+          <button
+            class="nav-icon"
+            type="button"
+            onclick={enterFullscreen}
+            aria-label="Fullscreen"
+            title="Fullscreen"
+          >
+            <Expand size={16} />
+          </button>
+        {/if}
+        <button class="nav-icon dangerText" type="button" onclick={clearAll} aria-label="Clear all" title="Clear">
+          Clear
+        </button>
+        <div class="picker save-picker" bind:this={saveMenuRoot}>
+          <button
+            type="button"
+            class="nav-icon"
+            aria-label="Save"
+            aria-expanded={isSaveMenuOpen}
+            onclick={() => {
+              isSaveMenuOpen = !isSaveMenuOpen
+              if (isSaveMenuOpen) {
+                isColorMenuOpen = false
+                isBrushMenuOpen = false
+              }
+            }}
+            title="Save"
+          >
+            <Save size={16} />
+          </button>
+          {#if isSaveMenuOpen}
+            <div class="save-dropdown" role="menu" aria-label="Save options">
+              <button class="save-option-btn" type="button" onclick={saveAsPng}>PNG</button>
+              <button class="save-option-btn" type="button" onclick={saveAsSvg}>SVG</button>
+            </div>
+          {/if}
+        </div>
+        <select
+          class="provider-select"
+          aria-label="Model provider"
+          value={providerMode}
+          onchange={onProviderDropdownChange}
+          title="Model provider"
+        >
+          <option value="local">Local</option>
+          <option value="groq">Groq</option>
+        </select>
+      </div>
+
+      <div class="nav-title" aria-hidden="true">DrawAI</div>
+
+      <div class="nav-right">
+        <div class="picker color-picker" bind:this={colorMenuRoot}>
+          <button
+            type="button"
+            class="color-swatch"
+            aria-label="Selected color"
+            aria-expanded={isColorMenuOpen}
+            onclick={() => {
+              isColorMenuOpen = !isColorMenuOpen
+              if (isColorMenuOpen) isBrushMenuOpen = false
+            }}
+            style={`background:${brushColor}`}
+          ></button>
+
+          {#if isColorMenuOpen}
+            <div class="color-dropdown" role="menu" aria-label="Choose color">
+              <div
+                class="wheel"
+                bind:this={hueRingEl}
+                onpointerdown={onHuePointerDown}
+                role="slider"
+                tabindex="0"
+                aria-label="Base hue"
+                aria-valuemin={0}
+                aria-valuemax={360}
+                aria-valuenow={Math.round(hue)}
+              >
+                <div
+                  class="wheel-marker"
+                  style={`left:${50 + Math.cos(((hue - 90) * Math.PI) / 180) * 44}%; top:${50 + Math.sin(((hue - 90) * Math.PI) / 180) * 44}%;`}
+                ></div>
+                <div
+                  class="wheel-inner"
+                  style={`background:${currentHueColor}`}
+                  bind:this={svSquareEl}
+                  onpointerdown={onSvPointerDown}
+                  role="slider"
+                  tabindex="0"
+                  aria-label="Color brightness and saturation"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(value * 100)}
+                >
+                  <div class="sv-layer white"></div>
+                  <div class="sv-layer black"></div>
+                  <div class="sv-cursor" style={`left:${saturation * 100}%; top:${(1 - value) * 100}%;`}></div>
+                </div>
+              </div>
+            </div>
+          {/if}
+        </div>
+
+        <div class="picker brush-picker" bind:this={brushMenuRoot}>
+          <button
+            type="button"
+            class="brush-swatch"
+            aria-label="Selected brush style"
+            aria-expanded={isBrushMenuOpen}
+            onclick={() => {
+              isBrushMenuOpen = !isBrushMenuOpen
+              if (isBrushMenuOpen) isColorMenuOpen = false
+            }}
+          >
+            {currentBrushLabel}
+          </button>
+
+          {#if isBrushMenuOpen}
+            <div class="brush-dropdown" role="menu" aria-label="Choose brush">
+              <div class="brush-styles" role="list">
+                {#each brushStyles as option}
+                  <button
+                    type="button"
+                    class="brush-style-btn"
+                    aria-label={`Brush style ${option.label}`}
+                    onclick={() => {
+                      brushStyle = option.id
+                      isBrushMenuOpen = false
+                    }}
+                    aria-pressed={brushStyle === option.id}
+                  >
+                    {option.label}
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
+      </div>
+    </header>
+  </section>
+</main>

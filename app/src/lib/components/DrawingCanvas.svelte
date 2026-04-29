@@ -8,6 +8,7 @@
   export let brushOpacity: number = 1
   export let toolMode: 'draw' | 'erase' = 'draw'
   export let brushStyle: BrushStyle = 'ink'
+  export let activeLayerId: string = 'layer-1'
 
   export let strokes: StrokeData[] = []
 
@@ -89,6 +90,48 @@
       streamline: 0.55,
       simulatePressure: false,
       easing: (t: number) => t * (2 - t)
+    },
+    airbrush: {
+      thinning: 0.1,
+      smoothing: 0.9,
+      streamline: 0.65,
+      simulatePressure: true
+    },
+    calligraphy: {
+      thinning: 0.95,
+      smoothing: 0.45,
+      streamline: 0.25,
+      simulatePressure: false
+    },
+    watercolor: {
+      thinning: 0.4,
+      smoothing: 0.85,
+      streamline: 0.5,
+      simulatePressure: true
+    },
+    charcoal: {
+      thinning: 0.75,
+      smoothing: 0.35,
+      streamline: 0.15,
+      simulatePressure: true
+    },
+    neon: {
+      thinning: 0.55,
+      smoothing: 0.7,
+      streamline: 0.5,
+      simulatePressure: false
+    },
+    pixel: {
+      thinning: 0,
+      smoothing: 0,
+      streamline: 0,
+      simulatePressure: false
+    },
+    ribbon: {
+      thinning: 0.8,
+      smoothing: 0.78,
+      streamline: 0.68,
+      simulatePressure: true
     }
   }
 
@@ -110,9 +153,9 @@
       velocityThinning = Math.min(speed * 0.22, 0.25)
     }
 
-    const weighted = rawPressure * 0.7 + tiltFactor * 0.3
+    const weighted = rawPressure * 0.78 + tiltFactor * 0.22
     const synthetic = weighted - velocityThinning
-    return Math.max(0.08, Math.min(1, synthetic))
+    return Math.max(0.14, Math.min(1, synthetic))
   }
 
   const drawStroke = (stroke: StrokeData) => {
@@ -162,7 +205,8 @@
         color: brushColor,
         opacity: brushOpacity,
         mode: toolMode,
-        style: brushStyle
+        style: brushStyle,
+        layerId: activeLayerId
       })
     }
   }
@@ -271,7 +315,8 @@
         color: brushColor,
         opacity: brushOpacity,
         mode: toolMode,
-        style: brushStyle
+        style: brushStyle,
+        layerId: activeLayerId
       })
     }
     drawingPoints = []

@@ -3,9 +3,10 @@
   import { Eraser, Expand, RotateCcw, RotateCw, Save } from 'lucide-svelte'
   import getStroke from 'perfect-freehand'
   import DrawingCanvas from './lib/components/DrawingCanvas.svelte'
+  import BrushSelector from './lib/components/BrushSelector.svelte'
   import ModelSelector from './lib/components/ModelSelector.svelte'
   import SuggestionPanel from './lib/components/SuggestionPanel.svelte'
-  import type { BrushStyle, StrokeData } from './lib/types'
+  import type { BrushStyle, LayerData, StrokeData, StrokeStack } from './lib/types'
   import {
     generateUndoSuggestionsStream,
     prewarmSuggestionModel,
@@ -19,7 +20,7 @@
   } from './lib/ai/parameterProvider'
 
   let strokes: StrokeData[] = []
-  let undoneStack: StrokeData[] = []
+  let undoneStack: StrokeStack = []
   let undoneContext: StrokeData[] = []
   let suggestions: RedoSuggestion[] = []
   let loadingSuggestions = false
@@ -43,7 +44,7 @@
   let brushColor = initialColor
   let brushSize = 14
   let brushOpacity = 1
-  let brushStyle: BrushStyle = 'pencil'
+  let brushStyle: BrushStyle = 'ribbon'
   let toolMode: 'draw' | 'erase' = 'draw'
   let isColorMenuOpen = false
   let isBrushMenuOpen = false
@@ -53,15 +54,31 @@
   let colorMenuRoot: HTMLDivElement | null = null
   let brushMenuRoot: HTMLDivElement | null = null
   let saveMenuRoot: HTMLDivElement | null = null
+  let layerMenuRoot: HTMLDivElement | null = null
   let drawingCanvasRef: { getPngDataUrl?: () => string } | null = null
   let hueRingEl: HTMLDivElement | null = null
   let svSquareEl: HTMLDivElement | null = null
   let hueDragging = false
   let svDragging = false
-  const brushStyles: Array<{ id: BrushStyle; label: string }> = [
-    { id: 'pencil', label: 'Pencil' },
-    { id: 'ink', label: 'Ink' },
-    { id: 'marker', label: 'Marker' }
+  let layers: LayerData[] = [{ id: 'layer-1', name: 'Layer 1', visible: true }]
+  let activeLayerId = 'layer-1'
+  let visibleLayerIds: string[] = ['layer-1']
+  let showLayerMenu = false
+  let recentColors: string[] = []
+  let paletteSuggestions: string[] = []
+  let lastPaletteStrokeMark = 0
+
+  const brushStyles: Array<{ id: BrushStyle; label: string; preview: string }> = [
+    { id: 'pencil', label: 'Pencil', preview: '////' },
+    { id: 'ink', label: 'Ink', preview: '~~~' },
+    { id: 'marker', label: 'Marker', preview: '===' },
+    { id: 'airbrush', label: 'Airbrush', preview: '....' },
+    { id: 'calligraphy', label: 'Calligraphy', preview: '/\\/' },
+    { id: 'watercolor', label: 'Watercolor', preview: '~~.' },
+    { id: 'charcoal', label: 'Charcoal', preview: '###' },
+    { id: 'neon', label: 'Neon', preview: '***' },
+    { id: 'pixel', label: 'Pixel', preview: '[]' },
+    { id: 'ribbon', label: 'Ribbon', preview: '≈≈≈' }
   ]
   $: currentBrushLabel = brushStyles.find((b) => b.id === brushStyle)?.label ?? 'Ink'
   const brushStyleOptions: Record<BrushStyle, Parameters<typeof getStroke>[1]> = {
@@ -85,6 +102,48 @@
       streamline: 0.55,
       simulatePressure: false,
       easing: (t: number) => t * (2 - t)
+    },
+    airbrush: {
+      thinning: 0.1,
+      smoothing: 0.9,
+      streamline: 0.65,
+      simulatePressure: true
+    },
+    calligraphy: {
+      thinning: 0.95,
+      smoothing: 0.45,
+      streamline: 0.25,
+      simulatePressure: false
+    },
+    watercolor: {
+      thinning: 0.4,
+      smoothing: 0.85,
+      streamline: 0.5,
+      simulatePressure: true
+    },
+    charcoal: {
+      thinning: 0.75,
+      smoothing: 0.35,
+      streamline: 0.15,
+      simulatePressure: true
+    },
+    neon: {
+      thinning: 0.55,
+      smoothing: 0.7,
+      streamline: 0.5,
+      simulatePressure: false
+    },
+    pixel: {
+      thinning: 0,
+      smoothing: 0,
+      streamline: 0,
+      simulatePressure: false
+    },
+    ribbon: {
+      thinning: 0.8,
+      smoothing: 0.78,
+      streamline: 0.68,
+      simulatePressure: true
     }
   }
 
@@ -192,6 +251,59 @@
 
   $: brushColor = hsvToHex(hue, saturation, value)
   $: currentHueColor = hsvToHex(hue, 1, 1)
+  $: visibleStrokes = strokes.filter((stroke) => visibleLayerIds.includes(stroke.layerId))
+
+  const rememberColor = (color: string) => {
+    recentColors = [color, ...recentColors.filter((c) => c !== color)].slice(0, 10)
+  }
+
+  const colorDistance = (a: string, b: string) => {
+    const ca = hexToRgb(a)
+    const cb = hexToRgb(b)
+    return Math.hypot(ca.r - cb.r, ca.g - cb.g, ca.b - cb.b)
+  }
+
+  const generatePaletteSuggestions = async () => {
+    const used = Array.from(new Set(strokes.map((s) => s.color))).slice(0, 24)
+    if (used.length === 0) return
+    await Promise.resolve()
+    const hsvSeeds = used.map((hex) => {
+      const rgb = hexToRgb(hex)
+      return rgbToHsv(rgb.r, rgb.g, rgb.b)
+    })
+    const generated: string[] = []
+    for (let i = 0; i < 10; i += 1) {
+      const seed = hsvSeeds[i % hsvSeeds.length]
+      const h = (seed.h + 28 * (i + 1)) % 360
+      const s = clamp(0.35 + (seed.s + i * 0.07) % 0.55, 0.3, 0.9)
+      const v = clamp(0.55 + (seed.v + i * 0.05) % 0.4, 0.45, 0.98)
+      generated.push(hsvToHex(h, s, v))
+    }
+    paletteSuggestions = generated.filter(
+      (color, idx, arr) =>
+        arr.indexOf(color) === idx && used.every((u) => colorDistance(u, color) > 24)
+    )
+  }
+
+  const addLayer = () => {
+    if (layers.length >= 100) return
+    const next = `layer-${layers.length + 1}`
+    const layer: LayerData = { id: next, name: `Layer ${layers.length + 1}`, visible: true }
+    layers = [...layers, layer]
+    visibleLayerIds = [...visibleLayerIds, next]
+    activeLayerId = next
+  }
+
+  const toggleLayerVisibility = (layerId: string) => {
+    const layer = layers.find((l) => l.id === layerId)
+    if (!layer) return
+    const nextVisible = !layer.visible
+    layers = layers.map((l) => (l.id === layerId ? { ...l, visible: nextVisible } : l))
+    visibleLayerIds = layers
+      .map((l) => (l.id === layerId ? { ...l, visible: nextVisible } : l))
+      .filter((l) => l.visible)
+      .map((l) => l.id)
+  }
 
   const onWindowPointerDown = (event: PointerEvent) => {
     const target = event.target as Node | null
@@ -210,6 +322,11 @@
       if (saveRoot && target && saveRoot.contains(target)) return
       isSaveMenuOpen = false
     }
+    if (showLayerMenu) {
+      const layerRoot = layerMenuRoot
+      if (layerRoot && target && layerRoot.contains(target)) return
+      showLayerMenu = false
+    }
   }
 
   const getPathFromStroke = (points: number[][]) => {
@@ -220,6 +337,62 @@
       acc.push(`Q${x},${y} ${(x + nextX) / 2},${(y + nextY) / 2}`)
       return acc
     }, [`M${first[0]},${first[1]}`]).join(' ')
+  }
+
+  const renderLayerPreview = (layerId: string): string => {
+    if (typeof document === 'undefined') return ''
+    const layerStrokes = strokes.filter((s) => s.layerId === layerId)
+    if (layerStrokes.length === 0) return ''
+    const canvas = document.createElement('canvas')
+    const width = 220
+    const height = 120
+    canvas.width = width
+    canvas.height = height
+    const pctx = canvas.getContext('2d')
+    if (!pctx) return ''
+
+    pctx.fillStyle = '#ffffff'
+    pctx.fillRect(0, 0, width, height)
+
+    const all = layerStrokes.flatMap((s) => s.points)
+    const xs = all.map((p) => p[0])
+    const ys = all.map((p) => p[1])
+    const minX = Math.min(...xs)
+    const maxX = Math.max(...xs)
+    const minY = Math.min(...ys)
+    const maxY = Math.max(...ys)
+    const pad = 10
+    const bw = Math.max(1, maxX - minX)
+    const bh = Math.max(1, maxY - minY)
+    const scale = Math.min((width - pad * 2) / bw, (height - pad * 2) / bh)
+
+    for (const stroke of layerStrokes) {
+      const shifted = stroke.points.map(([x, y, p]) => [
+        (x - minX) * scale + pad,
+        (y - minY) * scale + pad,
+        p
+      ]) as [number, number, number][]
+      const options = brushStyleOptions[stroke.style] ?? brushStyleOptions.ink
+      const outline = getStroke(shifted, { size: Math.max(1, stroke.size * scale), ...options })
+      const path = getPathFromStroke(outline as unknown as number[][])
+      if (!path) continue
+      const p = new Path2D(path)
+      pctx.save()
+      if (stroke.mode === 'erase') {
+        pctx.globalCompositeOperation = 'destination-out'
+        pctx.fillStyle = '#000'
+      } else {
+        pctx.globalCompositeOperation = 'source-over'
+        pctx.fillStyle = stroke.color
+      }
+      pctx.globalAlpha = stroke.opacity
+      pctx.fill(p)
+      pctx.restore()
+    }
+
+    pctx.strokeStyle = '#dbe5f0'
+    pctx.strokeRect(0.5, 0.5, width - 1, height - 1)
+    return canvas.toDataURL('image/png')
   }
 
   const downloadFile = (name: string, blob: Blob) => {
@@ -242,8 +415,8 @@
   }
 
   const buildSvgMarkup = () => {
-    if (strokes.length === 0) return ''
-    const allPoints = strokes.flatMap((s) => s.points)
+    if (visibleStrokes.length === 0) return ''
+    const allPoints = visibleStrokes.flatMap((s) => s.points)
     const xs = allPoints.map((p) => p[0])
     const ys = allPoints.map((p) => p[1])
     const minX = Math.min(...xs)
@@ -254,7 +427,7 @@
     const width = Math.max(1, Math.ceil(maxX - minX + pad * 2))
     const height = Math.max(1, Math.ceil(maxY - minY + pad * 2))
 
-    const paths = strokes
+    const paths = visibleStrokes
       .map((stroke) => {
         const shifted = stroke.points.map(([x, y, p]) => [x - minX + pad, y - minY + pad, p] as [number, number, number])
         const options = brushStyleOptions[stroke.style] ?? brushStyleOptions.ink
@@ -277,7 +450,16 @@
   }
 
   const addStroke = (stroke: StrokeData) => {
-    strokes = [...strokes, stroke]
+    const next = {
+      ...stroke,
+      layerId: activeLayerId
+    }
+    strokes = [...strokes, next]
+    rememberColor(next.color)
+    if (strokes.length - lastPaletteStrokeMark >= 40) {
+      lastPaletteStrokeMark = strokes.length
+      void generatePaletteSuggestions()
+    }
     undoneStack = []
     undoneContext = []
     suggestions = []
@@ -287,7 +469,9 @@
   }
 
   const applySuggestion = (suggestion: RedoSuggestion) => {
-    strokes = [...strokes, ...suggestion.strokes]
+    const projected = suggestion.strokes.map((stroke) => ({ ...stroke, layerId: activeLayerId }))
+    strokes = [...strokes, ...projected]
+    projected.forEach((stroke) => rememberColor(stroke.color))
     undoneStack = []
     undoneContext = []
     suggestions = []
@@ -378,6 +562,9 @@
     strokes = []
     undoneStack = []
     undoneContext = []
+    layers = [{ id: 'layer-1', name: 'Layer 1', visible: true }]
+    activeLayerId = 'layer-1'
+    visibleLayerIds = ['layer-1']
     suggestions = []
     loadingSuggestions = false
     modelStatus = 'idle'
@@ -435,6 +622,39 @@
     showProviderWarning = true
   }
 
+  const PROJECT_STORAGE_KEY = 'drawai:project-v2'
+  const persistProject = () => {
+    try {
+      const payload = JSON.stringify({
+        strokes,
+        layers,
+        activeLayerId,
+        visibleLayerIds,
+        recentColors
+      })
+      localStorage.setItem(PROJECT_STORAGE_KEY, payload)
+      const usedBytes = payload.length * 2
+      if (usedBytes > 4.5 * 1024 * 1024) {
+        onProviderWarning(
+          'Local storage is almost full. Save a local file soon or your project can be lost.'
+        )
+      }
+    } catch {
+      onProviderWarning('Local storage is full. Save your file locally now to avoid data loss.')
+    }
+  }
+
+  let persistDebounce: ReturnType<typeof setTimeout> | null = null
+  $: {
+    strokes
+    layers
+    activeLayerId
+    visibleLayerIds
+    recentColors
+    if (persistDebounce) clearTimeout(persistDebounce)
+    persistDebounce = setTimeout(persistProject, 400)
+  }
+
   onMount(() => {
     setProviderWarningHandler(onProviderWarning)
     const provider = localStorage.getItem('drawai:model-provider')
@@ -451,6 +671,31 @@
       showModelSelector = true
       providerMode = 'local'
       resetParameterProvider()
+    }
+
+    try {
+      const raw = localStorage.getItem(PROJECT_STORAGE_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          strokes?: StrokeData[]
+          layers?: LayerData[]
+          activeLayerId?: string
+          visibleLayerIds?: string[]
+          recentColors?: string[]
+        }
+        if (Array.isArray(parsed.layers) && parsed.layers.length > 0) layers = parsed.layers
+        if (Array.isArray(parsed.strokes)) strokes = parsed.strokes
+        if (typeof parsed.activeLayerId === 'string') activeLayerId = parsed.activeLayerId
+        if (Array.isArray(parsed.visibleLayerIds)) visibleLayerIds = parsed.visibleLayerIds
+        if (Array.isArray(parsed.recentColors)) recentColors = parsed.recentColors.slice(0, 10)
+        if (strokes.length === 0) {
+          layers = [{ id: 'layer-1', name: 'Layer 1', visible: true }]
+          activeLayerId = 'layer-1'
+          visibleLayerIds = ['layer-1']
+        }
+      }
+    } catch {
+      // ignore corrupt persisted state
     }
 
     return () => {
@@ -539,23 +784,51 @@
 
     <DrawingCanvas
       bind:this={drawingCanvasRef}
-      {strokes}
+      strokes={visibleStrokes}
       {brushSize}
       {brushColor}
       {brushOpacity}
       {toolMode}
       {brushStyle}
+      {activeLayerId}
       on:addstroke={(event) => addStroke(event.detail)}
       on:penDoubleTapUndo={undoAndSuggest}
     />
-    <div class="redo-panel">
-      <SuggestionPanel
-        {suggestions}
-        {loadingSuggestions}
-        {modelStatus}
-        on:pick={((event) => applySuggestion(event.detail))}
-      />
-    </div>
+    <aside class="right-rail">
+      {#if paletteSuggestions.length > 0}
+        <section class="palette-panel">
+          <header>
+            <h2>AI Palette</h2>
+          </header>
+          <div class="dots">
+            {#each paletteSuggestions as color}
+              <button
+                class="dot"
+                type="button"
+                style={`background:${color}`}
+                onclick={() => {
+                  const rgb = hexToRgb(color)
+                  const hsv = rgbToHsv(rgb.r, rgb.g, rgb.b)
+                  hue = hsv.h
+                  saturation = hsv.s
+                  value = hsv.v
+                  rememberColor(color)
+                }}
+                aria-label={`Palette color ${color}`}
+              ></button>
+            {/each}
+          </div>
+        </section>
+      {/if}
+      <div class="redo-panel">
+        <SuggestionPanel
+          {suggestions}
+          {loadingSuggestions}
+          {modelStatus}
+          on:pick={((event) => applySuggestion(event.detail))}
+        />
+      </div>
+    </aside>
 
     <header class="navbar" aria-label="Top toolbar">
       <div class="nav-left">
@@ -643,6 +916,33 @@
       <div class="nav-title" aria-hidden="true">DrawAI</div>
 
       <div class="nav-right">
+        <div class="picker layer-picker" bind:this={layerMenuRoot}>
+          <button class="nav-icon" type="button" onclick={() => (showLayerMenu = !showLayerMenu)} title="Layers">
+            Layers
+          </button>
+          {#if showLayerMenu}
+            <div class="save-dropdown layer-dropdown" role="menu" aria-label="Layer selector">
+              <button class="save-option-btn" type="button" onclick={addLayer}>+ Add Layer</button>
+              {#each layers as layer}
+                <div class="layer-card">
+                  <img class="layer-preview-image" src={renderLayerPreview(layer.id)} alt={`Preview of ${layer.name}`} />
+                  <div class="layer-row">
+                    <button class="save-option-btn" type="button" onclick={() => (activeLayerId = layer.id)}>
+                      {layer.name}
+                    </button>
+                    <label class="layer-check">
+                      <input
+                        type="checkbox"
+                        checked={layer.visible}
+                        onchange={() => toggleLayerVisibility(layer.id)}
+                      />
+                    </label>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
         <div class="picker color-picker" bind:this={colorMenuRoot}>
           <button
             type="button"
@@ -690,46 +990,46 @@
                   <div class="sv-cursor" style={`left:${saturation * 100}%; top:${(1 - value) * 100}%;`}></div>
                 </div>
               </div>
+              {#if recentColors.length > 0}
+                <div class="dots">
+                  {#each recentColors as color}
+                    <button
+                      class="dot"
+                      type="button"
+                      onclick={() => {
+                        const rgb = hexToRgb(color)
+                        const hsv = rgbToHsv(rgb.r, rgb.g, rgb.b)
+                        hue = hsv.h
+                        saturation = hsv.s
+                        value = hsv.v
+                      }}
+                      style={`background:${color}`}
+                      aria-label={`Recent color ${color}`}
+                    ></button>
+                  {/each}
+                </div>
+              {/if}
             </div>
           {/if}
         </div>
 
-        <div class="picker brush-picker" bind:this={brushMenuRoot}>
-          <button
-            type="button"
-            class="brush-swatch"
-            aria-label="Selected brush style"
-            aria-expanded={isBrushMenuOpen}
-            onclick={() => {
+        <div bind:this={brushMenuRoot}>
+          <BrushSelector
+            value={brushStyle}
+            open={isBrushMenuOpen}
+            options={brushStyles}
+            onToggle={() => {
               isBrushMenuOpen = !isBrushMenuOpen
               if (isBrushMenuOpen) isColorMenuOpen = false
             }}
-          >
-            {currentBrushLabel}
-          </button>
-
-          {#if isBrushMenuOpen}
-            <div class="brush-dropdown" role="menu" aria-label="Choose brush">
-              <div class="brush-styles" role="list">
-                {#each brushStyles as option}
-                  <button
-                    type="button"
-                    class="brush-style-btn"
-                    aria-label={`Brush style ${option.label}`}
-                    onclick={() => {
-                      brushStyle = option.id
-                      isBrushMenuOpen = false
-                    }}
-                    aria-pressed={brushStyle === option.id}
-                  >
-                    {option.label}
-                  </button>
-                {/each}
-              </div>
-            </div>
-          {/if}
+            onPick={(id) => {
+              brushStyle = id
+              isBrushMenuOpen = false
+            }}
+          />
         </div>
       </div>
     </header>
   </section>
+
 </main>

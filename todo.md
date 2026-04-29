@@ -1,8 +1,0 @@
-- try to have as little lines of code as possible. try to encapsolate code as much as possible. move brush selector to a new component because we will add many brush types
-- fix the strokes they are fucked they are jagged and broken
-- create a stack datatype for strokes 
-- added many more brush types and let me visually see how they look before picking them
-- add a new component called ai color pallet selected. after about 40 strokes show a pop up that takes all colors used and recommends 10 colors that fit well with them based on AI text model and let user pick each one of them. only update this every 40 strokes and do it in the background async dont show loading to the user
-- on color picker, under add all previous 10 used colors
-- add Layers!!! very important feature on top on the nav bar you can select which layers will be shown. the save button should only save the layers shown make it posssible to create up to 100 layers. on the layer selector make it so you can see a previow of the layer 
-- save file as long as its possible in browser local storage. if there is no more local storage space or geting close to it tell the user to save the file locally or he will miss his project

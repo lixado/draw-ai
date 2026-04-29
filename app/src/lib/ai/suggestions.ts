@@ -50,6 +50,48 @@ const brushStyleOptions: Record<BrushStyle, Parameters<typeof getStroke>[1]> = {
     smoothing: 0.8,
     streamline: 0.55,
     simulatePressure: false
+  },
+  airbrush: {
+    thinning: 0.1,
+    smoothing: 0.9,
+    streamline: 0.65,
+    simulatePressure: true
+  },
+  calligraphy: {
+    thinning: 0.95,
+    smoothing: 0.45,
+    streamline: 0.25,
+    simulatePressure: false
+  },
+  watercolor: {
+    thinning: 0.4,
+    smoothing: 0.85,
+    streamline: 0.5,
+    simulatePressure: true
+  },
+  charcoal: {
+    thinning: 0.75,
+    smoothing: 0.35,
+    streamline: 0.15,
+    simulatePressure: true
+  },
+  neon: {
+    thinning: 0.55,
+    smoothing: 0.7,
+    streamline: 0.5,
+    simulatePressure: false
+  },
+  pixel: {
+    thinning: 0,
+    smoothing: 0,
+    streamline: 0,
+    simulatePressure: false
+  },
+  ribbon: {
+    thinning: 0.8,
+    smoothing: 0.78,
+    streamline: 0.68,
+    simulatePressure: true
   }
 }
 

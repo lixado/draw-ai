@@ -18,6 +18,7 @@ body,
 
 body {
   background: #ffffff;
+  touch-action: none;
 }
 
 .app-shell {
@@ -209,6 +210,34 @@ body {
   font-weight: 700;
 }
 
+.canvas-picker {
+  position: relative;
+}
+
+.canvas-dropdown {
+  left: 0;
+  right: auto;
+  min-width: 170px;
+}
+
+.canvas-current {
+  font-size: 10px;
+  color: #475569;
+  padding: 4px 6px 6px;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.infinite-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #334155;
+}
+
 .provider-warning-overlay {
   position: fixed;
   inset: 0;
@@ -336,6 +365,9 @@ body {
   border-radius: 14px;
   padding: 8px;
   backdrop-filter: blur(6px);
+  max-height: min(72vh, 460px);
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .save-dropdown {
@@ -652,4 +684,16 @@ body {
 
 .tool-btn.danger {
   color: #b91c1c;
+}
+
+@media (max-width: 900px) {
+  .provider-select,
+  .nav-title,
+  .nav-title-icon {
+    display: none;
+  }
+
+  .brush-dropdown {
+    max-height: 46vh;
+  }
 }

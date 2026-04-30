@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
-  import { Bot, Eraser, Expand, Layers3, RotateCcw, RotateCw, Save, Trash2 } from 'lucide-svelte'
+  import { Bot, Eraser, Expand, Infinity as InfinityIcon, Layers3, RotateCcw, RotateCw, Ruler, Save, Trash2 } from 'lucide-svelte'
   import JSZip from 'jszip'
   import getStroke from 'perfect-freehand'
   import logoUrl from './assets/logo.png'
@@ -51,10 +51,12 @@
   let isColorMenuOpen = false
   let isBrushMenuOpen = false
   let isSaveMenuOpen = false
+  let isCanvasMenuOpen = false
   let currentHueColor = '#ff0000'
   let colorMenuRoot: HTMLDivElement | null = null
   let brushMenuRoot: HTMLDivElement | null = null
   let saveMenuRoot: HTMLDivElement | null = null
+  let canvasMenuRoot: HTMLDivElement | null = null
   let layerMenuRoot: HTMLDivElement | null = null
   let drawingCanvasRef: { getPngDataUrl?: () => string } | null = null
   let hueRingEl: HTMLDivElement | null = null
@@ -68,6 +70,25 @@
   let recentColors: string[] = []
   let paletteSuggestions: string[] = []
   let lastPaletteStrokeMark = 0
+  let clearUndoSnapshot:
+    | {
+        strokes: StrokeData[]
+        layers: LayerData[]
+        activeLayerId: string
+        visibleLayerIds: string[]
+      }
+    | null = null
+  const canvasPresets = [
+    { id: 'infinite', label: 'Infinite', width: 0, height: 0 },
+    { id: '1024x1024', label: '1024 x 1024', width: 1024, height: 1024 },
+    { id: '1536x1536', label: '1536 x 1536', width: 1536, height: 1536 },
+    { id: '2048x1536', label: '2048 x 1536', width: 2048, height: 1536 },
+    { id: '2732x2048', label: '2732 x 2048', width: 2732, height: 2048 }
+  ] as const
+  let canvasPresetId: (typeof canvasPresets)[number]['id'] = 'infinite'
+  let canvasWidth = 0
+  let canvasHeight = 0
+  let keepFullscreen = false
 
   const brushStyles: Array<{ id: BrushStyle; label: string }> = [
     { id: 'pencil', label: 'Pencil' },
@@ -331,6 +352,11 @@
       if (saveRoot && target && saveRoot.contains(target)) return
       isSaveMenuOpen = false
     }
+    if (isCanvasMenuOpen) {
+      const canvasRoot = canvasMenuRoot
+      if (canvasRoot && target && canvasRoot.contains(target)) return
+      isCanvasMenuOpen = false
+    }
     if (showLayerMenu) {
       const layerRoot = layerMenuRoot
       if (layerRoot && target && layerRoot.contains(target)) return
@@ -533,6 +559,7 @@
   }
 
   const addStroke = (stroke: StrokeData) => {
+    clearUndoSnapshot = null
     const next = {
       ...stroke,
       layerId: activeLayerId
@@ -552,6 +579,7 @@
   }
 
   const applySuggestion = (suggestion: RedoSuggestion) => {
+    clearUndoSnapshot = null
     const projected = suggestion.strokes.map((stroke) => ({ ...stroke, layerId: activeLayerId }))
     strokes = [...strokes, ...projected]
     projected.forEach((stroke) => rememberColor(stroke.color))
@@ -591,6 +619,18 @@
   }
 
   const undoAndSuggest = async () => {
+    if (clearUndoSnapshot) {
+      strokes = clearUndoSnapshot.strokes
+      layers = clearUndoSnapshot.layers
+      activeLayerId = clearUndoSnapshot.activeLayerId
+      visibleLayerIds = clearUndoSnapshot.visibleLayerIds
+      clearUndoSnapshot = null
+      suggestions = []
+      loadingSuggestions = false
+      modelStatus = 'idle'
+      suggestionRequestId += 1
+      return
+    }
     if (strokes.length === 0) return
     const requestId = ++suggestionRequestId
     const removed = strokes[strokes.length - 1]
@@ -642,11 +682,23 @@
 
   const enterFullscreen = async () => {
     if (!document.fullscreenElement) {
-      await document.documentElement.requestFullscreen()
+      keepFullscreen = true
+      await document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {
+        // ignore devices that don't support navigationUI options
+      })
     }
   }
 
   const clearAll = () => {
+    clearUndoSnapshot = {
+      strokes: strokes.map((stroke) => ({
+        ...stroke,
+        points: stroke.points.map((point) => [point[0], point[1], point[2]])
+      })),
+      layers: layers.map((layer) => ({ ...layer })),
+      activeLayerId,
+      visibleLayerIds: [...visibleLayerIds]
+    }
     suggestionRequestId += 1
     strokes = []
     undoneStack = []
@@ -654,9 +706,40 @@
     layers = [{ id: 'layer-1', name: 'Layer 1', visible: true }]
     activeLayerId = 'layer-1'
     visibleLayerIds = ['layer-1']
+    canvasPresetId = 'infinite'
+    canvasWidth = 0
+    canvasHeight = 0
     suggestions = []
     loadingSuggestions = false
     modelStatus = 'idle'
+  }
+
+  const onCanvasPresetChange = (nextId: (typeof canvasPresets)[number]['id']) => {
+    const next = canvasPresets.find((preset) => preset.id === nextId)
+    if (!next) return
+    const prevWidth = canvasWidth
+    const prevHeight = canvasHeight
+    canvasPresetId = next.id
+    if (next.width > 0 && next.height > 0 && prevWidth > 0 && prevHeight > 0) {
+      const sx = next.width / prevWidth
+      const sy = next.height / prevHeight
+      strokes = strokes.map((stroke) => ({
+        ...stroke,
+        points: stroke.points.map(([x, y, p]) => [x * sx, y * sy, p])
+      }))
+      undoneStack = undoneStack.map((stroke) => ({
+        ...stroke,
+        points: stroke.points.map(([x, y, p]) => [x * sx, y * sy, p])
+      }))
+      undoneContext = undoneContext.map((stroke) => ({
+        ...stroke,
+        points: stroke.points.map(([x, y, p]) => [x * sx, y * sy, p])
+      }))
+    }
+    canvasWidth = next.width
+    canvasHeight = next.height
+    clearUndoSnapshot = null
+    isCanvasMenuOpen = false
   }
 
   const onKeyDown = (event: KeyboardEvent) => {
@@ -719,7 +802,10 @@
         layers,
         activeLayerId,
         visibleLayerIds,
-        recentColors
+        recentColors,
+        canvasPresetId,
+        canvasWidth,
+        canvasHeight
       })
       localStorage.setItem(PROJECT_STORAGE_KEY, payload)
       const usedBytes = payload.length * 2
@@ -740,11 +826,20 @@
     activeLayerId
     visibleLayerIds
     recentColors
+    canvasPresetId
+    canvasWidth
+    canvasHeight
     if (persistDebounce) clearTimeout(persistDebounce)
     persistDebounce = setTimeout(persistProject, 400)
   }
 
   onMount(() => {
+    const onFullscreenChange = () => {
+      if (!document.fullscreenElement && keepFullscreen && isIPad) {
+        void document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {})
+      }
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange)
     setProviderWarningHandler(onProviderWarning)
     const provider = localStorage.getItem('drawai:model-provider')
     const storedKey = localStorage.getItem('drawai:groq-key') ?? ''
@@ -771,16 +866,33 @@
           activeLayerId?: string
           visibleLayerIds?: string[]
           recentColors?: string[]
+          canvasPresetId?: (typeof canvasPresets)[number]['id']
+          canvasWidth?: number
+          canvasHeight?: number
         }
         if (Array.isArray(parsed.layers) && parsed.layers.length > 0) layers = parsed.layers
         if (Array.isArray(parsed.strokes)) strokes = parsed.strokes
         if (typeof parsed.activeLayerId === 'string') activeLayerId = parsed.activeLayerId
         if (Array.isArray(parsed.visibleLayerIds)) visibleLayerIds = parsed.visibleLayerIds
         if (Array.isArray(parsed.recentColors)) recentColors = parsed.recentColors.slice(0, 10)
+        if (typeof parsed.canvasPresetId === 'string') {
+          const preset = canvasPresets.find((item) => item.id === parsed.canvasPresetId)
+          if (preset) {
+            canvasPresetId = preset.id
+            canvasWidth = preset.width
+            canvasHeight = preset.height
+          }
+        } else if (typeof parsed.canvasWidth === 'number' && typeof parsed.canvasHeight === 'number') {
+          canvasWidth = Math.max(128, Math.floor(parsed.canvasWidth))
+          canvasHeight = Math.max(128, Math.floor(parsed.canvasHeight))
+        }
         if (strokes.length === 0) {
           layers = [{ id: 'layer-1', name: 'Layer 1', visible: true }]
           activeLayerId = 'layer-1'
           visibleLayerIds = ['layer-1']
+          canvasPresetId = 'infinite'
+          canvasWidth = 0
+          canvasHeight = 0
         }
       }
     } catch {
@@ -788,6 +900,7 @@
     }
 
     return () => {
+      document.removeEventListener('fullscreenchange', onFullscreenChange)
       setProviderWarningHandler(null)
     }
   })
@@ -874,6 +987,8 @@
     <DrawingCanvas
       bind:this={drawingCanvasRef}
       strokes={visibleStrokes}
+      {canvasWidth}
+      {canvasHeight}
       {brushSize}
       {brushColor}
       {brushOpacity}
@@ -927,7 +1042,7 @@
           class="nav-icon"
           type="button"
           onclick={undoAndSuggest}
-          disabled={strokes.length === 0}
+          disabled={strokes.length === 0 && !clearUndoSnapshot}
           aria-label="Undo"
           title="Undo"
         >
@@ -992,6 +1107,46 @@
                 Save each layer individually as PNG
               </button>
               <button class="save-option-btn" type="button" onclick={saveAsSvg}>SVG</button>
+            </div>
+          {/if}
+        </div>
+        <div class="picker canvas-picker" bind:this={canvasMenuRoot}>
+          <button
+            type="button"
+            class="nav-icon"
+            aria-label="Canvas size options"
+            aria-expanded={isCanvasMenuOpen}
+            onclick={() => {
+              isCanvasMenuOpen = !isCanvasMenuOpen
+              if (isCanvasMenuOpen) {
+                isColorMenuOpen = false
+                isBrushMenuOpen = false
+                isSaveMenuOpen = false
+              }
+            }}
+            title="Canvas"
+          >
+            <Ruler size={16} />
+          </button>
+          {#if isCanvasMenuOpen}
+            <div class="save-dropdown canvas-dropdown" role="menu" aria-label="Canvas size options">
+              <div class="canvas-current">
+                Current:
+                {#if canvasPresetId === 'infinite'}
+                  <span class="infinite-indicator" aria-label="Infinite canvas"><InfinityIcon size={13} /></span>
+                {:else}
+                  {`${canvasWidth} x ${canvasHeight}`}
+                {/if}
+              </div>
+              {#each canvasPresets as preset}
+                <button class="save-option-btn" type="button" onclick={() => onCanvasPresetChange(preset.id)}>
+                  {#if preset.id === 'infinite'}
+                    <span class="infinite-indicator" aria-label="Infinite canvas"><InfinityIcon size={14} /></span>
+                  {:else}
+                    {preset.label}
+                  {/if}
+                </button>
+              {/each}
             </div>
           {/if}
         </div>

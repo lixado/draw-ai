@@ -9,6 +9,8 @@
   export let toolMode: 'draw' | 'erase' = 'draw'
   export let brushStyle: BrushStyle = 'ink'
   export let activeLayerId: string = 'layer-1'
+  export let canvasWidth: number = 2048
+  export let canvasHeight: number = 1536
 
   export let strokes: StrokeData[] = []
 
@@ -32,11 +34,13 @@
   let viewOffsetX = 0
   let viewOffsetY = 0
   const touchPoints = new Map<number, { x: number; y: number }>()
+  let activePenPointerId: number | null = null
   let pinchPrevDistance = 0
   let pinchPrevMidX = 0
   let pinchPrevMidY = 0
   const MIN_SCALE = 0.25
   const MAX_SCALE = 8
+  let frameRequested = false
 
   const resize = () => {
     if (!canvas || !canvas.parentElement) return
@@ -49,6 +53,27 @@
   }
 
   const clampScale = (next: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, next))
+
+  const scheduleRender = () => {
+    if (frameRequested) return
+    frameRequested = true
+    requestAnimationFrame(() => {
+      frameRequested = false
+      render()
+    })
+  }
+
+  const getViewportTransform = () => {
+    if (!canvas) return { baseScale: 1, baseOffsetX: 0, baseOffsetY: 0 }
+    if (canvasWidth <= 0 || canvasHeight <= 0) return { baseScale: 1, baseOffsetX: 0, baseOffsetY: 0 }
+    const rect = canvas.getBoundingClientRect()
+    const safeWidth = Math.max(1, canvasWidth)
+    const safeHeight = Math.max(1, canvasHeight)
+    const baseScale = Math.min(rect.width / safeWidth, rect.height / safeHeight)
+    const baseOffsetX = (rect.width - safeWidth * baseScale) / 2
+    const baseOffsetY = (rect.height - safeHeight * baseScale) / 2
+    return { baseScale, baseOffsetX, baseOffsetY }
+  }
 
   const zoomAt = (screenX: number, screenY: number, nextScaleRaw: number) => {
     const nextScale = clampScale(nextScaleRaw)
@@ -191,9 +216,17 @@
     if (!ctx || !canvas) return
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.clearRect(0, 0, canvas.width, canvas.height)
+    const { baseScale, baseOffsetX, baseOffsetY } = getViewportTransform()
     ctx.scale(dpr, dpr)
-    ctx.translate(viewOffsetX, viewOffsetY)
-    ctx.scale(viewScale, viewScale)
+    ctx.translate(baseOffsetX + viewOffsetX, baseOffsetY + viewOffsetY)
+    ctx.scale(baseScale * viewScale, baseScale * viewScale)
+    if (canvasWidth > 0 && canvasHeight > 0) {
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight)
+      ctx.strokeStyle = '#e2e8f0'
+      ctx.lineWidth = 1 / Math.max(1, baseScale * viewScale)
+      ctx.strokeRect(0, 0, canvasWidth, canvasHeight)
+    }
     for (const stroke of strokes) {
       drawStroke(stroke)
     }
@@ -213,10 +246,12 @@
 
   const toCanvasPoint = (event: PointerEvent): StrokePoint => {
     const rect = canvas.getBoundingClientRect()
+    const { baseScale, baseOffsetX, baseOffsetY } = getViewportTransform()
     const sx = event.clientX - rect.left
     const sy = event.clientY - rect.top
-    const x = (sx - viewOffsetX) / viewScale
-    const y = (sy - viewOffsetY) / viewScale
+    const scale = Math.max(0.0001, baseScale * viewScale)
+    const x = (sx - baseOffsetX - viewOffsetX) / scale
+    const y = (sy - baseOffsetY - viewOffsetY) / scale
     const pressure = toSyntheticPressure(event, x, y)
     lastSampleX = x
     lastSampleY = y
@@ -225,6 +260,8 @@
   }
 
   const onPointerDown = (event: PointerEvent) => {
+    if (event.pointerType === 'pen') activePenPointerId = event.pointerId
+    if (event.pointerType === 'touch' && activePenPointerId !== null) return
     if (event.pointerType === 'touch') {
       const rect = canvas.getBoundingClientRect()
       touchPoints.set(event.pointerId, { x: event.clientX - rect.left, y: event.clientY - rect.top })
@@ -236,7 +273,7 @@
         // Stop an in-progress stroke when entering gesture mode.
         pointerDown = false
         drawingPoints = []
-        render()
+        scheduleRender()
         return
       }
     }
@@ -248,10 +285,11 @@
     lastSampleY = start[1]
     lastSampleTime = event.timeStamp
     drawingPoints = [start]
-    render()
+    scheduleRender()
   }
 
   const onPointerMove = (event: PointerEvent) => {
+    if (event.pointerType === 'touch' && activePenPointerId !== null) return
     if (event.pointerType === 'touch' && touchPoints.has(event.pointerId)) {
       const rect = canvas.getBoundingClientRect()
       touchPoints.set(event.pointerId, { x: event.clientX - rect.left, y: event.clientY - rect.top })
@@ -270,7 +308,7 @@
         pinchPrevDistance = dist
         pinchPrevMidX = midX
         pinchPrevMidY = midY
-        render()
+        scheduleRender()
         return
       }
     }
@@ -280,10 +318,11 @@
     const points =
       batch.length > 0 ? batch.map((coalesced) => toCanvasPoint(coalesced as PointerEvent)) : [toCanvasPoint(event)]
     drawingPoints = [...drawingPoints, ...points]
-    render()
+    scheduleRender()
   }
 
   const onPointerUp = (event: PointerEvent) => {
+    if (event.pointerType === 'pen' && activePenPointerId === event.pointerId) activePenPointerId = null
     if (event.pointerType === 'touch') {
       touchPoints.delete(event.pointerId)
       if (touchPoints.size < 2) {
@@ -320,19 +359,19 @@
       })
     }
     drawingPoints = []
-    render()
+    scheduleRender()
   }
 
   $: if (strokes) {
-    render()
+    scheduleRender()
   }
 
   $: if (drawingPoints) {
-    render()
+    scheduleRender()
   }
 
-  $: if (brushColor || brushSize) {
-    render()
+  $: if (brushColor || brushSize || brushOpacity || brushStyle || toolMode || canvasWidth || canvasHeight) {
+    scheduleRender()
   }
 
   const onWheel = (event: WheelEvent) => {
@@ -342,7 +381,7 @@
     const sy = event.clientY - rect.top
     const factor = Math.exp(-event.deltaY * 0.0015)
     zoomAt(sx, sy, viewScale * factor)
-    render()
+    scheduleRender()
   }
 
   export const getPngDataUrl = (): string => {

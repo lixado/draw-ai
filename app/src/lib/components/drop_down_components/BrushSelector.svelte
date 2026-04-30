@@ -14,27 +14,27 @@
     Waves
   } from 'lucide-svelte'
   import type { BrushStyle } from '../../types'
+import { brushStyleOptions } from '../../brush/brushStyleOptions'
   import DropDown from './DropDown.svelte'
 
   export let value: BrushStyle
   export let open = false
-  export let options: Array<{ id: BrushStyle; label: string }> = []
 
   export let onToggle: () => void
   export let onPick: (id: BrushStyle) => void
 
-  const brushStyleOptions: Record<BrushStyle, Parameters<typeof getStroke>[1]> = {
-    pencil: { thinning: 0.85, smoothing: 0.45, streamline: 0.2, simulatePressure: true },
-    ink: { thinning: 0.65, smoothing: 0.65, streamline: 0.4, simulatePressure: false },
-    marker: { thinning: 0.2, smoothing: 0.8, streamline: 0.55, simulatePressure: false },
-    airbrush: { thinning: 0.1, smoothing: 0.9, streamline: 0.65, simulatePressure: true },
-    calligraphy: { thinning: 0.95, smoothing: 0.45, streamline: 0.25, simulatePressure: false },
-    watercolor: { thinning: 0.4, smoothing: 0.85, streamline: 0.5, simulatePressure: true },
-    charcoal: { thinning: 0.75, smoothing: 0.35, streamline: 0.15, simulatePressure: true },
-    neon: { thinning: 0.55, smoothing: 0.7, streamline: 0.5, simulatePressure: false },
-    pixel: { thinning: 0, smoothing: 0, streamline: 0, simulatePressure: false },
-    ribbon: { thinning: 0.8, smoothing: 0.78, streamline: 0.68, simulatePressure: true }
-  }
+  const options: Array<{ id: BrushStyle; label: string }> = [
+    { id: 'pencil', label: 'Pencil' },
+    { id: 'ink', label: 'Ink' },
+    { id: 'marker', label: 'Marker' },
+    { id: 'airbrush', label: 'Airbrush' },
+    { id: 'calligraphy', label: 'Calligraphy' },
+    { id: 'watercolor', label: 'Watercolor' },
+    { id: 'charcoal', label: 'Charcoal' },
+    { id: 'neon', label: 'Neon' },
+    { id: 'pixel', label: 'Pixel' },
+    { id: 'ribbon', label: 'Ribbon' }
+  ]
 
   const toPath = (points: number[][]) => {
     if (!points.length) return ''

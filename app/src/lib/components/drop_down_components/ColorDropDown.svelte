@@ -1,5 +1,6 @@
 <script lang="ts">
   import DropDown from './DropDown.svelte'
+  import { hexToRgb, rgbToHsv } from '../../color/colorUtils'
 
   export let open = false
   export let onToggle: () => void
@@ -18,36 +19,6 @@
   let svDragging = false
 
   const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v))
-
-  const hexToRgb = (hex: string) => {
-    const cleaned = hex.replace('#', '')
-    const full = cleaned.length === 3 ? cleaned.split('').map((c) => `${c}${c}`).join('') : cleaned
-    const num = parseInt(full, 16)
-    return {
-      r: (num >> 16) & 255,
-      g: (num >> 8) & 255,
-      b: num & 255
-    }
-  }
-
-  const rgbToHsv = (r: number, g: number, b: number) => {
-    const rr = r / 255
-    const gg = g / 255
-    const bb = b / 255
-    const max = Math.max(rr, gg, bb)
-    const min = Math.min(rr, gg, bb)
-    const delta = max - min
-    let h = 0
-    if (delta !== 0) {
-      if (max === rr) h = 60 * (((gg - bb) / delta) % 6)
-      else if (max === gg) h = 60 * ((bb - rr) / delta + 2)
-      else h = 60 * ((rr - gg) / delta + 4)
-    }
-    if (h < 0) h += 360
-    const s = max === 0 ? 0 : delta / max
-    const v = max
-    return { h, s, v }
-  }
 
   const updateHueFromPointer = (event: PointerEvent) => {
     if (!hueRingEl) return

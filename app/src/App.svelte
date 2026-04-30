@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
-  import { Bot, Eraser, Expand, Infinity as InfinityIcon, Layers3, RotateCcw, RotateCw, Ruler, Trash2 } from 'lucide-svelte'
-  import getStroke from 'perfect-freehand'
+  import { Bot, Eraser, Expand, RotateCcw, RotateCw, Trash2 } from 'lucide-svelte'
   import logoUrl from './assets/logo.png'
   import DrawingCanvas from './lib/components/DrawingCanvas.svelte'
   import BrushSelector from './lib/components/drop_down_components/BrushSelector.svelte'
   import ColorDropDown from './lib/components/drop_down_components/ColorDropDown.svelte'
+  import LayerDropDown from './lib/components/drop_down_components/LayerDropDown.svelte'
+  import ResolutionDropDown from './lib/components/drop_down_components/ResolutionDropDown.svelte'
+  import { canvasPresets, type CanvasPresetId } from './lib/components/drop_down_components/resolutionPresets'
   import ModelSelector from './lib/components/ModelSelector.svelte'
   import SuggestionPanel from './lib/components/SuggestionPanel.svelte'
   import SaveDropDown from './lib/components/drop_down_components/SaveDropDown.svelte'
@@ -21,6 +23,14 @@
     setParameterProvider,
     setProviderWarningHandler
   } from './lib/ai/parameterProvider'
+  import { brushStyleOptions } from './lib/brush/brushStyleOptions'
+  import {
+    loadProjectState,
+    loadProviderMode,
+    saveProjectState,
+    saveProviderMode
+  } from './lib/localstorageManager'
+  import { hexToRgb, hsvToHex, rgbToHsv } from './lib/color/colorUtils'
 
   let strokes: StrokeData[] = []
   let undoneStack: StrokeStack = []
@@ -75,145 +85,10 @@
         visibleLayerIds: string[]
       }
     | null = null
-  const canvasPresets = [
-    { id: 'infinite', label: 'Infinite', width: 0, height: 0 },
-    { id: '1024x1024', label: '1024 x 1024', width: 1024, height: 1024 },
-    { id: '1536x1536', label: '1536 x 1536', width: 1536, height: 1536 },
-    { id: '2048x1536', label: '2048 x 1536', width: 2048, height: 1536 },
-    { id: '2732x2048', label: '2732 x 2048', width: 2732, height: 2048 }
-  ] as const
-  let canvasPresetId: (typeof canvasPresets)[number]['id'] = 'infinite'
+  let canvasPresetId: CanvasPresetId = 'infinite'
   let canvasWidth = 0
   let canvasHeight = 0
   let keepFullscreen = false
-
-  const brushStyles: Array<{ id: BrushStyle; label: string }> = [
-    { id: 'pencil', label: 'Pencil' },
-    { id: 'ink', label: 'Ink' },
-    { id: 'marker', label: 'Marker' },
-    { id: 'airbrush', label: 'Airbrush' },
-    { id: 'calligraphy', label: 'Calligraphy' },
-    { id: 'watercolor', label: 'Watercolor' },
-    { id: 'charcoal', label: 'Charcoal' },
-    { id: 'neon', label: 'Neon' },
-    { id: 'pixel', label: 'Pixel' },
-    { id: 'ribbon', label: 'Ribbon' }
-  ]
-  const brushStyleOptions: Record<BrushStyle, Parameters<typeof getStroke>[1]> = {
-    pencil: {
-      thinning: 0.85,
-      smoothing: 0.45,
-      streamline: 0.2,
-      simulatePressure: false,
-      easing: (t: number) => t * (2 - t)
-    },
-    ink: {
-      thinning: 0.65,
-      smoothing: 0.65,
-      streamline: 0.4,
-      simulatePressure: false,
-      easing: (t: number) => t * t
-    },
-    marker: {
-      thinning: 0.2,
-      smoothing: 0.8,
-      streamline: 0.55,
-      simulatePressure: false,
-      easing: (t: number) => t * (2 - t)
-    },
-    airbrush: {
-      thinning: 0.1,
-      smoothing: 0.9,
-      streamline: 0.65,
-      simulatePressure: true
-    },
-    calligraphy: {
-      thinning: 0.95,
-      smoothing: 0.45,
-      streamline: 0.25,
-      simulatePressure: false
-    },
-    watercolor: {
-      thinning: 0.4,
-      smoothing: 0.85,
-      streamline: 0.5,
-      simulatePressure: true
-    },
-    charcoal: {
-      thinning: 0.75,
-      smoothing: 0.35,
-      streamline: 0.15,
-      simulatePressure: true
-    },
-    neon: {
-      thinning: 0.55,
-      smoothing: 0.7,
-      streamline: 0.5,
-      simulatePressure: false
-    },
-    pixel: {
-      thinning: 0,
-      smoothing: 0,
-      streamline: 0,
-      simulatePressure: false
-    },
-    ribbon: {
-      thinning: 0.8,
-      smoothing: 0.78,
-      streamline: 0.68,
-      simulatePressure: true
-    }
-  }
-
-  const hexToRgb = (hex: string) => {
-    const cleaned = hex.replace('#', '')
-    const full = cleaned.length === 3 ? cleaned.split('').map((c) => `${c}${c}`).join('') : cleaned
-    const num = parseInt(full, 16)
-    return {
-      r: (num >> 16) & 255,
-      g: (num >> 8) & 255,
-      b: num & 255
-    }
-  }
-
-  const rgbToHex = (r: number, g: number, b: number) =>
-    `#${((1 << 24) + (Math.round(r) << 16) + (Math.round(g) << 8) + Math.round(b)).toString(16).slice(1)}`
-
-  const hsvToHex = (h: number, s: number, v: number) => {
-    const hh = ((h % 360) + 360) % 360
-    const c = v * s
-    const x = c * (1 - Math.abs(((hh / 60) % 2) - 1))
-    const m = v - c
-    let r = 0
-    let g = 0
-    let b = 0
-    if (hh < 60) [r, g, b] = [c, x, 0]
-    else if (hh < 120) [r, g, b] = [x, c, 0]
-    else if (hh < 180) [r, g, b] = [0, c, x]
-    else if (hh < 240) [r, g, b] = [0, x, c]
-    else if (hh < 300) [r, g, b] = [x, 0, c]
-    else [r, g, b] = [c, 0, x]
-    return rgbToHex((r + m) * 255, (g + m) * 255, (b + m) * 255)
-  }
-
-  const rgbToHsv = (r: number, g: number, b: number) => {
-    const rr = r / 255
-    const gg = g / 255
-    const bb = b / 255
-    const max = Math.max(rr, gg, bb)
-    const min = Math.min(rr, gg, bb)
-    const delta = max - min
-    let h = 0
-    if (delta !== 0) {
-      if (max === rr) h = 60 * (((gg - bb) / delta) % 6)
-      else if (max === gg) h = 60 * ((bb - rr) / delta + 2)
-      else h = 60 * ((rr - gg) / delta + 4)
-    }
-    if (h < 0) h += 360
-    const s = max === 0 ? 0 : delta / max
-    const v = max
-    return { h, s, v }
-  }
 
   const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v))
   const exitEraseMode = () => {
@@ -277,15 +152,25 @@
     layers = layers.map((layer) => (layer.id === layerId ? { ...layer, name } : layer))
   }
 
-  const toggleLayerVisibility = (layerId: string) => {
-    const layer = layers.find((l) => l.id === layerId)
-    if (!layer) return
-    const nextVisible = !layer.visible
-    layers = layers.map((l) => (l.id === layerId ? { ...l, visible: nextVisible } : l))
-    visibleLayerIds = layers
-      .map((l) => (l.id === layerId ? { ...l, visible: nextVisible } : l))
-      .filter((l) => l.visible)
-      .map((l) => l.id)
+  const getTopVisibleLayerId = (list: LayerData[]) => {
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      if (list[i].visible) return list[i].id
+    }
+    return null
+  }
+
+  const setActiveLayer = (layerId: string) => {
+    activeLayerId = layerId
+  }
+
+  const applyLayerState = (
+    nextLayers: LayerData[],
+    nextVisibleLayerIds: string[],
+    nextActiveLayerId: string
+  ) => {
+    layers = nextLayers
+    visibleLayerIds = nextVisibleLayerIds
+    activeLayerId = nextActiveLayerId
   }
 
   const onWindowPointerDown = (event: PointerEvent) => {
@@ -317,87 +202,18 @@
     }
   }
 
-  const getPathFromStroke = (points: number[][]) => {
-    if (!points.length) return ''
-    const [first, ...rest] = points
-    return rest.reduce((acc, [x, y], i, arr) => {
-      const [nextX, nextY] = arr[(i + 1) % arr.length]
-      acc.push(`Q${x},${y} ${(x + nextX) / 2},${(y + nextY) / 2}`)
-      return acc
-    }, [`M${first[0]},${first[1]}`]).join(' ')
-  }
-
-  const WHITE_LAYER_PREVIEW_DATA_URI =
-    'data:image/svg+xml;utf8,' +
-    encodeURIComponent(
-      '<svg xmlns="http://www.w3.org/2000/svg" width="220" height="120" viewBox="0 0 220 120"><rect width="220" height="120" fill="#ffffff"/><rect x="0.5" y="0.5" width="219" height="119" fill="none" stroke="#dbe5f0"/></svg>'
-    )
-
-  const renderLayerPreview = (layerId: string): string => {
-    if (typeof document === 'undefined') return WHITE_LAYER_PREVIEW_DATA_URI
-    const layerStrokes = strokes.filter((s) => s.layerId === layerId)
-    if (layerStrokes.length === 0) return WHITE_LAYER_PREVIEW_DATA_URI
-    const canvas = document.createElement('canvas')
-    const width = 220
-    const height = 120
-    canvas.width = width
-    canvas.height = height
-    const pctx = canvas.getContext('2d')
-    if (!pctx) return WHITE_LAYER_PREVIEW_DATA_URI
-
-    pctx.fillStyle = '#ffffff'
-    pctx.fillRect(0, 0, width, height)
-
-    const all = layerStrokes.flatMap((s) => s.points)
-    const xs = all.map((p) => p[0])
-    const ys = all.map((p) => p[1])
-    const minX = Math.min(...xs)
-    const maxX = Math.max(...xs)
-    const minY = Math.min(...ys)
-    const maxY = Math.max(...ys)
-    const pad = 10
-    const bw = Math.max(1, maxX - minX)
-    const bh = Math.max(1, maxY - minY)
-    const scale = Math.min((width - pad * 2) / bw, (height - pad * 2) / bh)
-
-    for (const stroke of layerStrokes) {
-      const shifted = stroke.points.map(([x, y, p]) => [
-        (x - minX) * scale + pad,
-        (y - minY) * scale + pad,
-        p
-      ]) as [number, number, number][]
-      const options = brushStyleOptions[stroke.style] ?? brushStyleOptions.ink
-      const outline = getStroke(shifted, { size: Math.max(1, stroke.size * scale), ...options })
-      const path = getPathFromStroke(outline as unknown as number[][])
-      if (!path) continue
-      const p = new Path2D(path)
-      pctx.save()
-      if (stroke.mode === 'erase') {
-        pctx.globalCompositeOperation = 'destination-out'
-        pctx.fillStyle = '#000'
-      } else {
-        pctx.globalCompositeOperation = 'source-over'
-        pctx.fillStyle = stroke.color
-      }
-      pctx.globalAlpha = stroke.opacity
-      pctx.fill(p)
-      pctx.restore()
-    }
-
-    pctx.strokeStyle = '#dbe5f0'
-    pctx.strokeRect(0.5, 0.5, width - 1, height - 1)
-    return canvas.toDataURL('image/png')
-  }
-
   const closeSaveMenu = () => {
     isSaveMenuOpen = false
   }
 
   const addStroke = (stroke: StrokeData) => {
     clearUndoSnapshot = null
+    const topVisibleLayerId = getTopVisibleLayerId(layers)
+    const targetLayerId =
+      visibleLayerIds.includes(activeLayerId) ? activeLayerId : (topVisibleLayerId ?? activeLayerId)
     const next = {
       ...stroke,
-      layerId: activeLayerId
+      layerId: targetLayerId
     }
     strokes = [...strokes, next]
     rememberColor(next.color)
@@ -415,7 +231,10 @@
 
   const applySuggestion = (suggestion: RedoSuggestion) => {
     clearUndoSnapshot = null
-    const projected = suggestion.strokes.map((stroke) => ({ ...stroke, layerId: activeLayerId }))
+    const topVisibleLayerId = getTopVisibleLayerId(layers)
+    const targetLayerId =
+      visibleLayerIds.includes(activeLayerId) ? activeLayerId : (topVisibleLayerId ?? activeLayerId)
+    const projected = suggestion.strokes.map((stroke) => ({ ...stroke, layerId: targetLayerId }))
     strokes = [...strokes, ...projected]
     projected.forEach((stroke) => rememberColor(stroke.color))
     undoneStack = []
@@ -549,7 +368,7 @@
     modelStatus = 'idle'
   }
 
-  const onCanvasPresetChange = (nextId: (typeof canvasPresets)[number]['id']) => {
+  const onCanvasPresetChange = (nextId: CanvasPresetId) => {
     const next = canvasPresets.find((preset) => preset.id === nextId)
     if (!next) return
     const prevWidth = canvasWidth
@@ -577,6 +396,15 @@
     isCanvasMenuOpen = false
   }
 
+  const onToggleCanvasMenu = () => {
+    isCanvasMenuOpen = !isCanvasMenuOpen
+    if (isCanvasMenuOpen) {
+      isColorMenuOpen = false
+      isBrushMenuOpen = false
+      isSaveMenuOpen = false
+    }
+  }
+
   const onKeyDown = (event: KeyboardEvent) => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
       event.preventDefault()
@@ -598,12 +426,11 @@
       groqApiKey = key
       setParameterProvider(createGroqParameterProvider(key))
       providerMode = 'groq'
-      localStorage.setItem('drawai:model-provider', 'groq')
-      localStorage.setItem('drawai:groq-key', key)
+      saveProviderMode('groq', key)
     } else {
       resetParameterProvider()
       providerMode = 'local'
-      localStorage.setItem('drawai:model-provider', 'local')
+      saveProviderMode('local')
     }
     await prewarmSuggestionModel()
   }
@@ -637,10 +464,8 @@
     }
   }
 
-  const PROJECT_STORAGE_KEY = 'drawai:project-v2'
   const persistProject = () => {
-    try {
-      const payload = JSON.stringify({
+    const persistStatus = saveProjectState({
         strokes,
         layers,
         activeLayerId,
@@ -650,14 +475,12 @@
         canvasWidth,
         canvasHeight
       })
-      localStorage.setItem(PROJECT_STORAGE_KEY, payload)
-      const usedBytes = payload.length * 2
-      if (usedBytes > 4.5 * 1024 * 1024) {
-        onProviderWarning(
-          'Local storage is almost full. Save a local file soon or your project can be lost.'
-        )
-      }
-    } catch {
+    if (persistStatus === 'near_limit') {
+      onProviderWarning(
+        'Local storage is almost full. Save a local file soon or your project can be lost.'
+      )
+    }
+    if (persistStatus === 'full') {
       onProviderWarning('Local storage is full. Save your file locally now to avoid data loss.')
     }
   }
@@ -684,14 +507,13 @@
     }
     document.addEventListener('fullscreenchange', onFullscreenChange)
     setProviderWarningHandler(onProviderWarning)
-    const provider = localStorage.getItem('drawai:model-provider')
-    const storedKey = localStorage.getItem('drawai:groq-key') ?? ''
-    groqApiKey = ENV_GROQ_API_KEY || storedKey.trim()
+    const providerState = loadProviderMode()
+    groqApiKey = ENV_GROQ_API_KEY || providerState.groqApiKey.trim()
 
     if (ENV_GROQ_API_KEY) {
       showModelSelector = false
       void applyProvider('groq', ENV_GROQ_API_KEY)
-    } else if (provider === 'groq' && groqApiKey) {
+    } else if (providerState.providerMode === 'groq' && groqApiKey) {
       showModelSelector = false
       void applyProvider('groq', groqApiKey)
     } else {
@@ -700,46 +522,32 @@
       resetParameterProvider()
     }
 
-    try {
-      const raw = localStorage.getItem(PROJECT_STORAGE_KEY)
-      if (raw) {
-        const parsed = JSON.parse(raw) as {
-          strokes?: StrokeData[]
-          layers?: LayerData[]
-          activeLayerId?: string
-          visibleLayerIds?: string[]
-          recentColors?: string[]
-          canvasPresetId?: (typeof canvasPresets)[number]['id']
-          canvasWidth?: number
-          canvasHeight?: number
+    const parsed = loadProjectState()
+    if (parsed) {
+      if (Array.isArray(parsed.layers) && parsed.layers.length > 0) layers = parsed.layers
+      if (Array.isArray(parsed.strokes)) strokes = parsed.strokes
+      if (typeof parsed.activeLayerId === 'string') activeLayerId = parsed.activeLayerId
+      if (Array.isArray(parsed.visibleLayerIds)) visibleLayerIds = parsed.visibleLayerIds
+      if (Array.isArray(parsed.recentColors)) recentColors = parsed.recentColors.slice(0, 10)
+      if (typeof parsed.canvasPresetId === 'string') {
+        const preset = canvasPresets.find((item) => item.id === parsed.canvasPresetId)
+        if (preset) {
+          canvasPresetId = preset.id
+          canvasWidth = preset.width
+          canvasHeight = preset.height
         }
-        if (Array.isArray(parsed.layers) && parsed.layers.length > 0) layers = parsed.layers
-        if (Array.isArray(parsed.strokes)) strokes = parsed.strokes
-        if (typeof parsed.activeLayerId === 'string') activeLayerId = parsed.activeLayerId
-        if (Array.isArray(parsed.visibleLayerIds)) visibleLayerIds = parsed.visibleLayerIds
-        if (Array.isArray(parsed.recentColors)) recentColors = parsed.recentColors.slice(0, 10)
-        if (typeof parsed.canvasPresetId === 'string') {
-          const preset = canvasPresets.find((item) => item.id === parsed.canvasPresetId)
-          if (preset) {
-            canvasPresetId = preset.id
-            canvasWidth = preset.width
-            canvasHeight = preset.height
-          }
-        } else if (typeof parsed.canvasWidth === 'number' && typeof parsed.canvasHeight === 'number') {
-          canvasWidth = Math.max(128, Math.floor(parsed.canvasWidth))
-          canvasHeight = Math.max(128, Math.floor(parsed.canvasHeight))
-        }
-        if (strokes.length === 0) {
-          layers = [{ id: 'layer-1', name: 'Layer 1', visible: true }]
-          activeLayerId = 'layer-1'
-          visibleLayerIds = ['layer-1']
-          canvasPresetId = 'infinite'
-          canvasWidth = 0
-          canvasHeight = 0
-        }
+      } else if (typeof parsed.canvasWidth === 'number' && typeof parsed.canvasHeight === 'number') {
+        canvasWidth = Math.max(128, Math.floor(parsed.canvasWidth))
+        canvasHeight = Math.max(128, Math.floor(parsed.canvasHeight))
       }
-    } catch {
-      // ignore corrupt persisted state
+      if (strokes.length === 0) {
+        layers = [{ id: 'layer-1', name: 'Layer 1', visible: true }]
+        activeLayerId = 'layer-1'
+        visibleLayerIds = ['layer-1']
+        canvasPresetId = 'infinite'
+        canvasWidth = 0
+        canvasHeight = 0
+      }
     }
 
     return () => {
@@ -935,46 +743,16 @@
           {brushStyleOptions}
           bind:rootEl={saveMenuRoot}
         />
-        <div class="picker canvas-picker" bind:this={canvasMenuRoot}>
-          <button
-            type="button"
-            class="nav-icon"
-            aria-label="Canvas size options"
-            aria-expanded={isCanvasMenuOpen}
-            onclick={() => {
-              isCanvasMenuOpen = !isCanvasMenuOpen
-              if (isCanvasMenuOpen) {
-                isColorMenuOpen = false
-                isBrushMenuOpen = false
-                isSaveMenuOpen = false
-              }
-            }}
-            title="Canvas"
-          >
-            <Ruler size={16} />
-          </button>
-          {#if isCanvasMenuOpen}
-            <div class="save-dropdown canvas-dropdown" role="menu" aria-label="Canvas size options">
-              <div class="canvas-current">
-                Current:
-                {#if canvasPresetId === 'infinite'}
-                  <span class="infinite-indicator" aria-label="Infinite canvas"><InfinityIcon size={13} /></span>
-                {:else}
-                  {`${canvasWidth} x ${canvasHeight}`}
-                {/if}
-              </div>
-              {#each canvasPresets as preset}
-                <button class="save-option-btn" type="button" onclick={() => onCanvasPresetChange(preset.id)}>
-                  {#if preset.id === 'infinite'}
-                    <span class="infinite-indicator" aria-label="Infinite canvas"><InfinityIcon size={14} /></span>
-                  {:else}
-                    {preset.label}
-                  {/if}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
+        <ResolutionDropDown
+          open={isCanvasMenuOpen}
+          onToggle={onToggleCanvasMenu}
+          bind:rootEl={canvasMenuRoot}
+          {canvasPresetId}
+          {canvasWidth}
+          {canvasHeight}
+          canvasPresetsList={canvasPresets}
+          onCanvasPresetChange={onCanvasPresetChange}
+        />
         <select
           class="provider-select"
           aria-label="Model provider"
@@ -993,48 +771,20 @@
       </div>
 
       <div class="nav-right">
-        <div class="picker layer-picker" bind:this={layerMenuRoot}>
-          <button class="nav-icon" type="button" onclick={() => (showLayerMenu = !showLayerMenu)} title="Layers">
-            <Layers3 size={16} />
-          </button>
-          {#if showLayerMenu}
-            <div class="save-dropdown layer-dropdown" role="menu" aria-label="Layer selector">
-              <div class="layer-list">
-                {#each layers as layer}
-                  <div class="layer-card">
-                    <img class="layer-preview-image" src={renderLayerPreview(layer.id)} alt={`Preview of ${layer.name}`} />
-                    <div class="layer-row">
-                      <button
-                        class="save-option-btn layer-select-btn"
-                        type="button"
-                        onclick={() => (activeLayerId = layer.id)}
-                        title="Select layer"
-                      >
-                        Use
-                      </button>
-                      <input
-                        class="layer-name-input"
-                        type="text"
-                        value={layer.name}
-                        maxlength="40"
-                        aria-label={`Layer name for ${layer.id}`}
-                        oninput={(event) => renameLayer(layer.id, (event.currentTarget as HTMLInputElement).value)}
-                      />
-                      <label class="layer-check">
-                        <input
-                          type="checkbox"
-                          checked={layer.visible}
-                          onchange={() => toggleLayerVisibility(layer.id)}
-                        />
-                      </label>
-                    </div>
-                  </div>
-                {/each}
-              </div>
-              <button class="save-option-btn layer-add-btn" type="button" onclick={addLayer}>+ Add Layer</button>
-            </div>
-          {/if}
-        </div>
+        <LayerDropDown
+          open={showLayerMenu}
+          onToggle={() => (showLayerMenu = !showLayerMenu)}
+          bind:rootEl={layerMenuRoot}
+          {layers}
+          {visibleLayerIds}
+          {strokes}
+          {brushStyleOptions}
+          {activeLayerId}
+          onActiveLayerChange={setActiveLayer}
+          onLayerStateChange={applyLayerState}
+          onRenameLayer={renameLayer}
+          onAddLayer={addLayer}
+        />
         <ColorDropDown
           open={isColorMenuOpen}
           onToggle={() => {
@@ -1055,7 +805,6 @@
           <BrushSelector
             value={brushStyle}
             open={isBrushMenuOpen}
-            options={brushStyles}
             onToggle={() => {
               isBrushMenuOpen = !isBrushMenuOpen
               if (isBrushMenuOpen) isColorMenuOpen = false

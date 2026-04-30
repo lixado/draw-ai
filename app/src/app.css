@@ -286,6 +286,7 @@ body {
 }
 
 .picker {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -356,27 +357,14 @@ body {
 }
 
 .brush-dropdown {
-  position: absolute;
-  top: 34px;
-  right: 0;
-  z-index: 100;
-  background: rgba(255, 255, 255, 0.97);
-  border: 1px solid #e2e8f0;
   border-radius: 14px;
   padding: 8px;
-  backdrop-filter: blur(6px);
   max-height: min(72vh, 460px);
   overflow-y: auto;
   overflow-x: hidden;
 }
 
 .save-dropdown {
-  position: absolute;
-  top: 30px;
-  left: 0;
-  z-index: 100;
-  background: rgba(255, 255, 255, 0.97);
-  border: 1px solid #e2e8f0;
   border-radius: 12px;
   padding: 6px;
   display: flex;
@@ -389,13 +377,13 @@ body {
 .save-option-btn {
   min-height: 26px;
   min-width: 92px;
-  padding: 5px 10px;
-  border: 1px solid #cbd5e1;
-  background: #ffffff;
-  color: #0f172a;
-  border-radius: 8px;
+  padding: 6px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(248, 250, 252, 0.9);
+  color: #1e293b;
+  border-radius: 6px;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
   text-align: left;
   cursor: pointer;
   display: flex;
@@ -407,7 +395,8 @@ body {
 }
 
 .save-option-btn:hover {
-  border-color: #94a3b8;
+  border-color: rgba(100, 116, 139, 0.58);
+  background: rgba(255, 255, 255, 0.96);
 }
 
 .layer-row .save-option-btn {

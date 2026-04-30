@@ -13,7 +13,8 @@
     Square,
     Waves
   } from 'lucide-svelte'
-  import type { BrushStyle } from '../types'
+  import type { BrushStyle } from '../../types'
+  import DropDown from './DropDown.svelte'
 
   export let value: BrushStyle
   export let open = false
@@ -96,32 +97,35 @@
   })
 </script>
 
-<div class="picker brush-picker">
-  <button type="button" class="brush-swatch" aria-label="Selected brush style" aria-expanded={open} onclick={onToggle}>
-    <Paintbrush size={16} />
-  </button>
+<DropDown
+  {open}
+  onToggle={onToggle}
+  pickerClass="brush-picker"
+  buttonClass="brush-swatch"
+  menuClass="brush-dropdown"
+  menuAlign="right"
+  triggerAriaLabel="Selected brush style"
+  menuAriaLabel="Choose brush"
+>
+  <span slot="trigger"><Paintbrush size={16} /></span>
 
-  {#if open}
-    <div class="brush-dropdown" role="menu" aria-label="Choose brush">
-      <div class="brush-styles" role="list">
-        {#each options as option}
-          {@const BrushIcon = brushIconMap[option.id] ?? Paintbrush}
-          <button
-            type="button"
-            class="brush-style-btn"
-            aria-label={`Brush style ${option.label}`}
-            onclick={() => onPick(option.id)}
-            aria-pressed={value === option.id}
-          >
-            <span class="brush-icon"><BrushIcon size={14} /></span>
-            <img class="brush-preview-img" src={previewMap[option.id]} alt="" />
-            <span>{option.label}</span>
-          </button>
-        {/each}
-      </div>
-    </div>
-  {/if}
-</div>
+  <div class="brush-styles" role="list">
+    {#each options as option}
+      {@const BrushIcon = brushIconMap[option.id] ?? Paintbrush}
+      <button
+        type="button"
+        class="brush-style-btn"
+        aria-label={`Brush style ${option.label}`}
+        onclick={() => onPick(option.id)}
+        aria-pressed={value === option.id}
+      >
+        <span class="brush-icon"><BrushIcon size={14} /></span>
+        <img class="brush-preview-img" src={previewMap[option.id]} alt="" />
+        <span>{option.label}</span>
+      </button>
+    {/each}
+  </div>
+</DropDown>
 
 <style>
   .brush-style-btn {

@@ -3,9 +3,9 @@ export type TextGenerator = (
   options?: { max_new_tokens?: number; temperature?: number }
 ) => Promise<Array<{ generated_text?: string }>>
 
-const MODEL_NAME = 'Xenova/distilgpt2'
+const DEFAULT_MODEL_NAME = 'Xenova/distilgpt2'
 
-let generatorPromise: Promise<TextGenerator | null> | null = null
+const generatorPromises = new Map<string, Promise<TextGenerator | null>>()
 let warningFilterInstalled = false
 let hfFetchPatched = false
 
@@ -59,9 +59,10 @@ const installHfFetchPatch = (runtimeEnv: { fetch?: typeof fetch }) => {
   hfFetchPatched = true
 }
 
-export const getSuggestionTextGenerator = async (): Promise<TextGenerator | null> => {
-  if (generatorPromise) return generatorPromise
-  generatorPromise = import('@huggingface/transformers')
+export const getSuggestionTextGenerator = async (modelName = DEFAULT_MODEL_NAME): Promise<TextGenerator | null> => {
+  const existing = generatorPromises.get(modelName)
+  if (existing) return existing
+  const nextPromise = import('@huggingface/transformers')
     .then(async ({ env, pipeline }) => {
       const runtimeEnv = (env ?? {}) as {
         useBrowserCache?: boolean
@@ -81,12 +82,12 @@ export const getSuggestionTextGenerator = async (): Promise<TextGenerator | null
 
       installWarningFilter()
       installHfFetchPatch(runtimeEnv)
-      console.log(`[drawAi:model] loading ${MODEL_NAME}`)
+      console.log(`[drawAi:model] loading ${modelName}`)
 
       const buildWebGpuGenerator = async (useBrowserCache: boolean) => {
         configureEnv(useBrowserCache)
-        const next = await pipeline('text-generation', MODEL_NAME, { device: 'webgpu' })
-        console.log(`[drawAi:model] loaded ${MODEL_NAME} (webgpu)`)
+        const next = await pipeline('text-generation', modelName, { device: 'webgpu' })
+        console.log(`[drawAi:model] loaded ${modelName} (webgpu)`)
         return next as TextGenerator
       }
       let activeGenerator: TextGenerator
@@ -125,16 +126,17 @@ export const getSuggestionTextGenerator = async (): Promise<TextGenerator | null
       return guardedGenerator
     })
     .catch((error) => {
-      console.error(`[drawAi:model] webgpu load/execute failed ${MODEL_NAME}: ${summarizeError(error)}`)
+      console.error(`[drawAi:model] webgpu load/execute failed ${modelName}: ${summarizeError(error)}`)
       return null
     })
-  return generatorPromise
+  generatorPromises.set(modelName, nextPromise)
+  return nextPromise
 }
 
-export const prewarmSuggestionTextGenerator = async (): Promise<void> => {
-  await getSuggestionTextGenerator()
+export const prewarmSuggestionTextGenerator = async (modelName = DEFAULT_MODEL_NAME): Promise<void> => {
+  await getSuggestionTextGenerator(modelName)
 }
 
 export const resetSuggestionGeneratorForDebug = () => {
-  generatorPromise = null
+  generatorPromises.clear()
 }

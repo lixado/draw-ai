@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
-  import { Bot, Eraser, Expand, Infinity as InfinityIcon, Layers3, RotateCcw, RotateCw, Ruler, Save, Trash2 } from 'lucide-svelte'
-  import JSZip from 'jszip'
+  import { Bot, Eraser, Expand, Infinity as InfinityIcon, Layers3, RotateCcw, RotateCw, Ruler, Trash2 } from 'lucide-svelte'
   import getStroke from 'perfect-freehand'
   import logoUrl from './assets/logo.png'
   import DrawingCanvas from './lib/components/DrawingCanvas.svelte'
-  import BrushSelector from './lib/components/BrushSelector.svelte'
+  import BrushSelector from './lib/components/drop_down_components/BrushSelector.svelte'
+  import ColorDropDown from './lib/components/drop_down_components/ColorDropDown.svelte'
   import ModelSelector from './lib/components/ModelSelector.svelte'
   import SuggestionPanel from './lib/components/SuggestionPanel.svelte'
+  import SaveDropDown from './lib/components/drop_down_components/SaveDropDown.svelte'
   import type { BrushStyle, LayerData, StrokeData, StrokeStack } from './lib/types'
   import {
     generateUndoSuggestionsStream,
@@ -59,10 +60,6 @@
   let canvasMenuRoot: HTMLDivElement | null = null
   let layerMenuRoot: HTMLDivElement | null = null
   let drawingCanvasRef: { getPngDataUrl?: () => string } | null = null
-  let hueRingEl: HTMLDivElement | null = null
-  let svSquareEl: HTMLDivElement | null = null
-  let hueDragging = false
-  let svDragging = false
   let layers: LayerData[] = [{ id: 'layer-1', name: 'Layer 1', visible: true }]
   let activeLayerId = 'layer-1'
   let visibleLayerIds: string[] = ['layer-1']
@@ -221,50 +218,6 @@
   const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v))
   const exitEraseMode = () => {
     if (toolMode === 'erase') toolMode = 'draw'
-  }
-
-  const updateHueFromPointer = (event: PointerEvent) => {
-    if (!hueRingEl) return
-    const rect = hueRingEl.getBoundingClientRect()
-    const cx = rect.left + rect.width / 2
-    const cy = rect.top + rect.height / 2
-    const dx = event.clientX - cx
-    const dy = event.clientY - cy
-    let deg = (Math.atan2(dy, dx) * 180) / Math.PI + 90
-    if (deg < 0) deg += 360
-    hue = deg
-    exitEraseMode()
-  }
-
-  const updateSvFromPointer = (event: PointerEvent) => {
-    if (!svSquareEl) return
-    const rect = svSquareEl.getBoundingClientRect()
-    const x = clamp(event.clientX - rect.left, 0, rect.width)
-    const y = clamp(event.clientY - rect.top, 0, rect.height)
-    saturation = clamp(x / rect.width, 0, 1)
-    value = clamp(1 - y / rect.height, 0, 1)
-    exitEraseMode()
-  }
-
-  const onHuePointerDown = (event: PointerEvent) => {
-    hueDragging = true
-    updateHueFromPointer(event)
-  }
-
-  const onSvPointerDown = (event: PointerEvent) => {
-    event.stopPropagation()
-    svDragging = true
-    updateSvFromPointer(event)
-  }
-
-  const onWindowPointerMove = (event: PointerEvent) => {
-    if (hueDragging) updateHueFromPointer(event)
-    if (svDragging) updateSvFromPointer(event)
-  }
-
-  const onWindowPointerUp = () => {
-    hueDragging = false
-    svDragging = false
   }
 
   {
@@ -436,125 +389,7 @@
     return canvas.toDataURL('image/png')
   }
 
-  const downloadFile = (name: string, blob: Blob) => {
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = name
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
-  const pngBlobFromDataUrl = (dataUrl: string): Blob | null => {
-    const payload = dataUrl.split(',')[1]
-    if (!payload) return null
-    const bin = atob(payload)
-    const bytes = new Uint8Array(bin.length)
-    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i)
-    return new Blob([bytes], { type: 'image/png' })
-  }
-
-  const buildLayerPngDataUrl = (layerId: string): string => {
-    if (typeof document === 'undefined') return ''
-    const canvas = document.createElement('canvas')
-    const width = Math.max(1, Math.floor(window.innerWidth))
-    const height = Math.max(1, Math.floor(window.innerHeight))
-    canvas.width = width
-    canvas.height = height
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return ''
-
-    ctx.fillStyle = '#ffffff'
-    ctx.fillRect(0, 0, width, height)
-
-    const layerStrokes = strokes.filter((s) => s.layerId === layerId)
-    for (const stroke of layerStrokes) {
-      const options = brushStyleOptions[stroke.style] ?? brushStyleOptions.ink
-      const outline = getStroke(stroke.points, { size: stroke.size, ...options })
-      const path = getPathFromStroke(outline as unknown as number[][])
-      if (!path) continue
-      const p = new Path2D(path)
-      ctx.save()
-      if (stroke.mode === 'erase') {
-        ctx.globalCompositeOperation = 'destination-out'
-        ctx.fillStyle = '#000000'
-      } else {
-        ctx.globalCompositeOperation = 'source-over'
-        ctx.fillStyle = stroke.color
-      }
-      ctx.globalAlpha = stroke.opacity
-      ctx.fill(p)
-      ctx.restore()
-    }
-
-    return canvas.toDataURL('image/png')
-  }
-
-  const saveAsPng = () => {
-    const dataUrl = drawingCanvasRef?.getPngDataUrl?.()
-    if (!dataUrl) return
-    const blob = pngBlobFromDataUrl(dataUrl)
-    if (!blob) return
-    downloadFile(`drawai-${Date.now()}.png`, blob)
-    isSaveMenuOpen = false
-  }
-
-  const sanitizeLayerFileName = (name: string, fallback: string) => {
-    const cleaned = name
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-    return cleaned || fallback
-  }
-
-  const saveEachLayerAsPng = async () => {
-    const stamp = Date.now()
-    const zip = new JSZip()
-    for (const layer of layers) {
-      const dataUrl = buildLayerPngDataUrl(layer.id)
-      const blob = pngBlobFromDataUrl(dataUrl)
-      if (!blob) continue
-      const safeLayerName = sanitizeLayerFileName(layer.name, layer.id)
-      zip.file(`${safeLayerName}.png`, blob)
-    }
-    const zipBlob = await zip.generateAsync({ type: 'blob' })
-    downloadFile(`drawai-layers-${stamp}.zip`, zipBlob)
-    isSaveMenuOpen = false
-  }
-
-  const buildSvgMarkup = () => {
-    if (visibleStrokes.length === 0) return ''
-    const allPoints = visibleStrokes.flatMap((s) => s.points)
-    const xs = allPoints.map((p) => p[0])
-    const ys = allPoints.map((p) => p[1])
-    const minX = Math.min(...xs)
-    const minY = Math.min(...ys)
-    const maxX = Math.max(...xs)
-    const maxY = Math.max(...ys)
-    const pad = 16
-    const width = Math.max(1, Math.ceil(maxX - minX + pad * 2))
-    const height = Math.max(1, Math.ceil(maxY - minY + pad * 2))
-
-    const paths = visibleStrokes
-      .map((stroke) => {
-        const shifted = stroke.points.map(([x, y, p]) => [x - minX + pad, y - minY + pad, p] as [number, number, number])
-        const options = brushStyleOptions[stroke.style] ?? brushStyleOptions.ink
-        const outline = getStroke(shifted, { size: stroke.size, ...options })
-        const d = getPathFromStroke(outline as unknown as number[][])
-        if (!d) return ''
-        const color = stroke.mode === 'erase' ? '#ffffff' : stroke.color
-        return `<path d="${d}" fill="${color}" fill-opacity="${stroke.opacity}" />`
-      })
-      .join('\n')
-
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#ffffff" />${paths}</svg>`
-  }
-
-  const saveAsSvg = () => {
-    const svg = buildSvgMarkup()
-    if (!svg) return
-    downloadFile(`drawai-${Date.now()}.svg`, new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }))
+  const closeSaveMenu = () => {
     isSaveMenuOpen = false
   }
 
@@ -794,6 +629,14 @@
     showProviderWarning = true
   }
 
+  const onToggleSaveMenu = () => {
+    isSaveMenuOpen = !isSaveMenuOpen
+    if (isSaveMenuOpen) {
+      isColorMenuOpen = false
+      isBrushMenuOpen = false
+    }
+  }
+
   const PROJECT_STORAGE_KEY = 'drawai:project-v2'
   const persistProject = () => {
     try {
@@ -909,8 +752,6 @@
 <svelte:window
   onkeydown={onKeyDown}
   onpointerdown={onWindowPointerDown}
-  onpointermove={onWindowPointerMove}
-  onpointerup={onWindowPointerUp}
 />
 
 <main class="app-shell">
@@ -1083,33 +924,17 @@
         <button class="nav-icon dangerText" type="button" onclick={clearAll} aria-label="Clear all" title="Clear">
           <Trash2 size={16} />
         </button>
-        <div class="picker save-picker" bind:this={saveMenuRoot}>
-          <button
-            type="button"
-            class="nav-icon"
-            aria-label="Save"
-            aria-expanded={isSaveMenuOpen}
-            onclick={() => {
-              isSaveMenuOpen = !isSaveMenuOpen
-              if (isSaveMenuOpen) {
-                isColorMenuOpen = false
-                isBrushMenuOpen = false
-              }
-            }}
-            title="Save"
-          >
-            <Save size={16} />
-          </button>
-          {#if isSaveMenuOpen}
-            <div class="save-dropdown" role="menu" aria-label="Save options">
-              <button class="save-option-btn" type="button" onclick={saveAsPng}>PNG</button>
-              <button class="save-option-btn" type="button" onclick={saveEachLayerAsPng}>
-                Save each layer individually as PNG
-              </button>
-              <button class="save-option-btn" type="button" onclick={saveAsSvg}>SVG</button>
-            </div>
-          {/if}
-        </div>
+        <SaveDropDown
+          open={isSaveMenuOpen}
+          onToggle={onToggleSaveMenu}
+          onClose={closeSaveMenu}
+          {drawingCanvasRef}
+          {strokes}
+          {layers}
+          {visibleStrokes}
+          {brushStyleOptions}
+          bind:rootEl={saveMenuRoot}
+        />
         <div class="picker canvas-picker" bind:this={canvasMenuRoot}>
           <button
             type="button"
@@ -1210,76 +1035,21 @@
             </div>
           {/if}
         </div>
-        <div class="picker color-picker" bind:this={colorMenuRoot}>
-          <button
-            type="button"
-            class="color-swatch"
-            aria-label="Selected color"
-            aria-expanded={isColorMenuOpen}
-            onclick={() => {
-              isColorMenuOpen = !isColorMenuOpen
-              if (isColorMenuOpen) isBrushMenuOpen = false
-            }}
-            style={`background:${brushColor}`}
-          ></button>
-
-          {#if isColorMenuOpen}
-            <div class="color-dropdown" role="menu" aria-label="Choose color">
-              <div
-                class="wheel"
-                bind:this={hueRingEl}
-                onpointerdown={onHuePointerDown}
-                role="slider"
-                tabindex="0"
-                aria-label="Base hue"
-                aria-valuemin={0}
-                aria-valuemax={360}
-                aria-valuenow={Math.round(hue)}
-              >
-                <div
-                  class="wheel-marker"
-                  style={`left:${50 + Math.cos(((hue - 90) * Math.PI) / 180) * 44}%; top:${50 + Math.sin(((hue - 90) * Math.PI) / 180) * 44}%;`}
-                ></div>
-                <div
-                  class="wheel-inner"
-                  style={`background:${currentHueColor}`}
-                  bind:this={svSquareEl}
-                  onpointerdown={onSvPointerDown}
-                  role="slider"
-                  tabindex="0"
-                  aria-label="Color brightness and saturation"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.round(value * 100)}
-                >
-                  <div class="sv-layer white"></div>
-                  <div class="sv-layer black"></div>
-                  <div class="sv-cursor" style={`left:${saturation * 100}%; top:${(1 - value) * 100}%;`}></div>
-                </div>
-              </div>
-              {#if recentColors.length > 0}
-                <div class="dots">
-                  {#each recentColors as color}
-                    <button
-                      class="dot"
-                      type="button"
-                      onclick={() => {
-                        const rgb = hexToRgb(color)
-                        const hsv = rgbToHsv(rgb.r, rgb.g, rgb.b)
-                        hue = hsv.h
-                        saturation = hsv.s
-                        value = hsv.v
-                        exitEraseMode()
-                      }}
-                      style={`background:${color}`}
-                      aria-label={`Recent color ${color}`}
-                    ></button>
-                  {/each}
-                </div>
-              {/if}
-            </div>
-          {/if}
-        </div>
+        <ColorDropDown
+          open={isColorMenuOpen}
+          onToggle={() => {
+            isColorMenuOpen = !isColorMenuOpen
+            if (isColorMenuOpen) isBrushMenuOpen = false
+          }}
+          bind:rootEl={colorMenuRoot}
+          selectedColor={brushColor}
+          bind:hue
+          bind:saturation
+          bind:value
+          {currentHueColor}
+          {recentColors}
+          onColorInteraction={exitEraseMode}
+        />
 
         <div bind:this={brushMenuRoot}>
           <BrushSelector

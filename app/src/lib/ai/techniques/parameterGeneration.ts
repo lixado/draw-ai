@@ -72,7 +72,8 @@ export const prewarmParameterGenerationModel = async (): Promise<void> => {
 // Technique #3: model-generated numeric parameters -> deterministic stroke transform.
 export const generateParameterSuggestionStrokes = async (
   allStrokes: StrokeData[],
-  undoneStrokes: StrokeData[]
+  undoneStrokes: StrokeData[],
+  options?: { modelClientId?: string }
 ): Promise<ParameterSuggestionResult> => {
   if (undoneStrokes.length === 0) return { strokes: [], source: 'failed' }
   const maxStrokeCount = Math.min(undoneStrokes.length, 6)
@@ -81,7 +82,7 @@ export const generateParameterSuggestionStrokes = async (
     totalStrokes: allStrokes.length,
     undoneCount: undoneStrokes.length,
     maxStrokeCount
-  })
+  }, options?.modelClientId)
   const parsed = normalizeCandidateParams(candidate, maxStrokeCount)
   if (!parsed) {
     return { strokes: [], source: 'failed' }

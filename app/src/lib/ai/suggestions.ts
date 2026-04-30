@@ -1,9 +1,7 @@
 import getStroke from 'perfect-freehand'
 import type { BrushStyle, StrokeData } from '../types'
-import {
-  generateParameterSuggestionStrokes,
-  prewarmParameterGenerationModel
-} from './techniques/parameterGeneration'
+import { prewarmParameterGenerationModel } from './techniques/parameterGeneration'
+import { suggestionEngine } from './engine/suggestionEngine'
 
 export type RedoSuggestion = {
   id: string
@@ -198,11 +196,7 @@ export const generateUndoSuggestions = async (
   if (undoneStrokes.length === 0) {
     return { modelStatus: 'ready', suggestions: [] }
   }
-  const generated = await Promise.all([
-    generateParameterSuggestionStrokes(currentStrokes, undoneStrokes),
-    generateParameterSuggestionStrokes(currentStrokes, undoneStrokes),
-    generateParameterSuggestionStrokes(currentStrokes, undoneStrokes)
-  ])
+  const generated = await suggestionEngine.generateBatch({ currentStrokes, undoneStrokes }, 3)
 
   const suggestions: RedoSuggestion[] = generated
     .filter((result) => result.strokes.length > 0)
@@ -228,13 +222,15 @@ export const generateUndoSuggestionsStream = async (
 
   const total = 3
   const suggestions: RedoSuggestion[] = []
-  for (let i = 0; i < total; i += 1) {
-    const result = await generateParameterSuggestionStrokes(currentStrokes, undoneStrokes)
+  await suggestionEngine.generateStream(
+    { currentStrokes, undoneStrokes },
+    total,
+    async (result) => {
     if (result.strokes.length === 0 || result.source !== 'model') {
-      console.log(`[drawAi:suggestions] #${i + 1}/${total} failed (no suggestion)`)
-      continue
+      console.log(`[drawAi:suggestions] #${result.index + 1}/${result.total} ${result.modelId} failed (no suggestion)`)
+      return
     }
-    console.log(`[drawAi:suggestions] #${i + 1}/${total} model`)
+    console.log(`[drawAi:suggestions] #${result.index + 1}/${result.total} ${result.modelId} model`)
     const suggestion: RedoSuggestion = {
       id: crypto.randomUUID(),
       previewUrl: renderOverlayPreview(currentStrokes, result.strokes, 280, 156),
@@ -242,7 +238,8 @@ export const generateUndoSuggestionsStream = async (
     }
     suggestions.push(suggestion)
     await handlers.onSuggestion(suggestion)
-  }
+    }
+  )
 
   return {
     modelStatus: 'ready',

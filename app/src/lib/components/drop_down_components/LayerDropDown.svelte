@@ -12,14 +12,6 @@
   export let strokes: StrokeData[] = []
   export let brushStyleOptions: Record<BrushStyle, Parameters<typeof getStroke>[1]>
   export let activeLayerId = ''
-  export let onActiveLayerChange: (layerId: string) => void
-  export let onLayerStateChange: (
-    nextLayers: LayerData[],
-    nextVisibleLayerIds: string[],
-    nextActiveLayerId: string
-  ) => void
-  export let onRenameLayer: (layerId: string, name: string) => void
-  export let onAddLayer: () => void
 
   const getTopVisibleLayerId = (list: LayerData[]) => {
     for (let i = list.length - 1; i >= 0; i -= 1) {
@@ -30,7 +22,7 @@
 
   const handleSelectLayer = (layerId: string) => {
     if (!visibleLayerIds.includes(layerId)) return
-    onActiveLayerChange(layerId)
+    activeLayerId = layerId
   }
 
   const handleToggleLayerVisibility = (layerId: string) => {
@@ -43,7 +35,22 @@
     if (nextVisibleLayerIds.length === 0 || !topVisibleLayerId) return
     const nextActiveLayerId =
       nextVisible || !nextVisibleLayerIds.includes(activeLayerId) ? topVisibleLayerId : activeLayerId
-    onLayerStateChange(nextLayers, nextVisibleLayerIds, nextActiveLayerId)
+    layers = nextLayers
+    visibleLayerIds = nextVisibleLayerIds
+    activeLayerId = nextActiveLayerId
+  }
+
+  const handleRenameLayer = (layerId: string, name: string) => {
+    layers = layers.map((layer) => (layer.id === layerId ? { ...layer, name } : layer))
+  }
+
+  const handleAddLayer = () => {
+    if (layers.length >= 100) return
+    const next = `layer-${layers.length + 1}`
+    const layer: LayerData = { id: next, name: `Layer ${layers.length + 1}`, visible: true }
+    layers = [...layers, layer]
+    visibleLayerIds = [...visibleLayerIds, next]
+    activeLayerId = next
   }
 
   const WHITE_LAYER_PREVIEW_DATA_URI =
@@ -146,7 +153,7 @@
             value={layer.name}
             maxlength="40"
             aria-label={`Layer name for ${layer.id}`}
-            oninput={(event) => onRenameLayer(layer.id, (event.currentTarget as HTMLInputElement).value)}
+            oninput={(event) => handleRenameLayer(layer.id, (event.currentTarget as HTMLInputElement).value)}
           />
           <label class="layer-check">
             <input
@@ -159,5 +166,5 @@
       </div>
     {/each}
   </div>
-  <button class="save-option-btn layer-add-btn" type="button" onclick={onAddLayer}>+ Add Layer</button>
+  <button class="save-option-btn layer-add-btn" type="button" onclick={handleAddLayer}>+ Add Layer</button>
 </DropDown>

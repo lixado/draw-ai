@@ -1,0 +1,17 @@
+{
+  "providers": [
+    {
+      "id": "groq",
+      "models": [
+        "llama-3.1-8b-instant"
+      ]
+    },
+    {
+      "id": "local",
+      "models": [
+        "Xenova/distilgpt2",
+        "Xenova/phi-2"
+      ]
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte'
   import { Bot, LoaderCircle, Square } from 'lucide-svelte'
-  import type { RedoSuggestion } from '../ai/suggestions'
+  import type { RedoSuggestion } from '../ai_old/suggestions'
 
   export let suggestions: RedoSuggestion[] = []
   export let loadingSuggestions = false

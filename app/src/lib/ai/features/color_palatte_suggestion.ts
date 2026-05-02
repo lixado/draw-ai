@@ -50,9 +50,11 @@ const generatePaletteSuggestions = async (
   const colorsCsv = used.join(', ')
   const userPrompt = buildPaletteUserPrompt(colorsCsv)
 
+  console.log('Generating palette suggestions...')
   const raw = await provider.generate(PALETTE_SYSTEM_PROMPT, userPrompt, {
     maxNewTokens: 256
   })
+  console.log('raw', raw)
   if (!raw || !raw.trim()) return []
 
   const parsed = extractHexColorsFromText(raw)

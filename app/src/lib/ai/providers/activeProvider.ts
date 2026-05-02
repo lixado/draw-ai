@@ -29,7 +29,16 @@ const createProvider = (selection: ActiveModelSelection): ProviderInterface => {
   return new TransformersProvider(selection.model)
 }
 
-export const setActiveProvider = async (
+/** Serializes provider switches so two in-flight inits never overlap (WebGPU / ONNX cannot load twice in parallel for the same session). */
+let providerSwitchChain: Promise<void> = Promise.resolve()
+
+const enqueueProviderSwitch = (fn: () => Promise<void>): Promise<void> => {
+  const next = providerSwitchChain.catch(() => {}).then(fn)
+  providerSwitchChain = next.catch(() => {})
+  return next
+}
+
+const switchToProvider = async (
   selection: ActiveModelSelection,
   apiKey: string | null
 ): Promise<void> => {
@@ -39,14 +48,25 @@ export const setActiveProvider = async (
   }
 
   const provider = createProvider(selection)
-  await provider.modelInit(selection.providerId === 'groq' ? apiKey : null)
-  activeProviderStore.set(provider)
-  activeSelectionStore.set(selection)
+  try {
+    await provider.modelInit(selection.providerId === 'groq' ? apiKey : null)
+    activeProviderStore.set(provider)
+    activeSelectionStore.set(selection)
+  } catch (error) {
+    await provider.destroy()
+    throw error
+  }
 }
 
-export const resetActiveProvider = async (): Promise<void> => {
-  const previous = get(activeProviderStore)
-  if (previous) await previous.destroy()
-  activeProviderStore.set(null)
-  activeSelectionStore.set(null)
-}
+export const setActiveProvider = async (
+  selection: ActiveModelSelection,
+  apiKey: string | null
+): Promise<void> => enqueueProviderSwitch(() => switchToProvider(selection, apiKey))
+
+export const resetActiveProvider = async (): Promise<void> =>
+  enqueueProviderSwitch(async () => {
+    const previous = get(activeProviderStore)
+    if (previous) await previous.destroy()
+    activeProviderStore.set(null)
+    activeSelectionStore.set(null)
+  })

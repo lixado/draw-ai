@@ -7,6 +7,9 @@ type TextGenerator = (
 
 const DEFAULT_MODEL_NAME = 'Xenova/distilgpt2'
 
+/** ONNX Bonsai models expect 1-bit weights in browser WebGPU (see bonsai-webgpu worker). */
+const BONSAI_ONNX_MODEL_PREFIX = 'onnx-community/Bonsai-'
+
 let warningFilterInstalled = false
 let hfFetchPatched = false
 
@@ -61,22 +64,44 @@ const installHfFetchPatch = (runtimeEnv: { fetch?: typeof fetch }) => {
   hfFetchPatched = true
 }
 
+type GenerationRow = {
+  generated_text?: string | Array<{ content?: string }>
+}
+
+const extractGeneratedText = (row: GenerationRow | undefined): string => {
+  const g = row?.generated_text
+  if (typeof g === 'string') return g
+  if (Array.isArray(g) && g.length > 0) {
+    const last = g[g.length - 1]
+    if (last && typeof last === 'object' && typeof last.content === 'string') return last.content
+  }
+  return ''
+}
+
 export class TransformersProvider implements ProviderInterface {
   private activeGenerator: TextGenerator | null = null
   private runQueue: Promise<void> = Promise.resolve()
   private destroyed = false
+  /** Coalesces concurrent modelInit (e.g. overlapping UI restores) into one load. */
+  private initPromise: Promise<void> | null = null
 
   constructor(private readonly modelName: string = DEFAULT_MODEL_NAME) {}
 
   async modelInit(_apiKey: string | null): Promise<void> {
-    this.destroyed = false
-    this.activeGenerator = await this.loadGenerator(true)
-    if (!this.activeGenerator) {
-      this.activeGenerator = await this.loadGenerator(false)
-    }
-    if (!this.activeGenerator) {
-      throw new Error(`[drawAi:model] failed to initialize ${this.modelName}`)
-    }
+    if (this.initPromise) return this.initPromise
+    this.initPromise = (async () => {
+      this.destroyed = false
+      this.activeGenerator = await this.loadGenerator(true)
+      if (!this.activeGenerator) {
+        this.activeGenerator = await this.loadGenerator(false)
+      }
+      if (!this.activeGenerator) {
+        throw new Error(`[drawAi:model] failed to initialize ${this.modelName}`)
+      }
+    })().finally(() => {
+      this.initPromise = null
+    })
+    return this.initPromise
   }
 
   async generate(
@@ -105,7 +130,7 @@ export class TransformersProvider implements ProviderInterface {
     await waitTurn
     try {
       const out = await this.activeGenerator(combined, { max_new_tokens: maxNewTokens, temperature: 0.25 })
-      return out?.[0]?.generated_text ?? ''
+      return extractGeneratedText(out?.[0] as GenerationRow)
     } catch (runtimeError) {
       if (!isRecoverableWebGpuError(runtimeError)) {
         console.error(`[drawAi:model] webgpu runtime failed: ${summarizeError(runtimeError)}`)
@@ -115,7 +140,7 @@ export class TransformersProvider implements ProviderInterface {
       this.activeGenerator = await this.loadGenerator(false)
       if (!this.activeGenerator) return ''
       const out = await this.activeGenerator(combined, { max_new_tokens: maxNewTokens, temperature: 0.25 })
-      return out?.[0]?.generated_text ?? ''
+      return extractGeneratedText(out?.[0] as GenerationRow)
     } finally {
       release()
     }
@@ -148,8 +173,12 @@ export class TransformersProvider implements ProviderInterface {
       installWarningFilter()
       installHfFetchPatch(runtimeEnv)
       console.log(`[drawAi:model] loading ${this.modelName}`)
-      const next = await pipeline('text-generation', this.modelName, { device: 'webgpu' })
-      console.log(`[drawAi:model] loaded ${this.modelName} (webgpu)`)
+      const isBonsaiOnnx = this.modelName.startsWith(BONSAI_ONNX_MODEL_PREFIX)
+      const next = await pipeline('text-generation', this.modelName, {
+        device: 'webgpu',
+        ...(isBonsaiOnnx ? { dtype: 'q1' as const } : {})
+      })
+      console.log(`[drawAi:model] loaded ${this.modelName} (webgpu${isBonsaiOnnx ? ', q1' : ''})`)
       return next as TextGenerator
     } catch (error) {
       console.error(

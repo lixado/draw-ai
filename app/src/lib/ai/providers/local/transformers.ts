@@ -79,12 +79,22 @@ export class TransformersProvider implements ProviderInterface {
     }
   }
 
-  async generate(prompt: string): Promise<string> {
+  async generate(
+    systemPrompt: string,
+    prompt: string,
+    options?: { maxNewTokens?: number }
+  ): Promise<string> {
     if (this.destroyed) return ''
     if (!this.activeGenerator) {
       await this.modelInit(null)
     }
     if (!this.activeGenerator) return ''
+
+    const maxNewTokens = options?.maxNewTokens ?? 32
+    const combined =
+      systemPrompt.trim() === ''
+        ? prompt
+        : `${systemPrompt.trim()}\n\n---\n\n${prompt}`
 
     let release!: () => void
     const waitTurn = this.runQueue
@@ -94,7 +104,7 @@ export class TransformersProvider implements ProviderInterface {
 
     await waitTurn
     try {
-      const out = await this.activeGenerator(prompt, { max_new_tokens: 32, temperature: 0.25 })
+      const out = await this.activeGenerator(combined, { max_new_tokens: maxNewTokens, temperature: 0.25 })
       return out?.[0]?.generated_text ?? ''
     } catch (runtimeError) {
       if (!isRecoverableWebGpuError(runtimeError)) {
@@ -104,7 +114,7 @@ export class TransformersProvider implements ProviderInterface {
       console.warn(`[drawAi:model] webgpu buffer failure, rebuilding pipeline`)
       this.activeGenerator = await this.loadGenerator(false)
       if (!this.activeGenerator) return ''
-      const out = await this.activeGenerator(prompt, { max_new_tokens: 32, temperature: 0.25 })
+      const out = await this.activeGenerator(combined, { max_new_tokens: maxNewTokens, temperature: 0.25 })
       return out?.[0]?.generated_text ?? ''
     } finally {
       release()

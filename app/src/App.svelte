@@ -7,9 +7,9 @@
   import SuggestionPanel from './lib/components/SuggestionPanel.svelte'
   import type { BrushStyle, LayerData, StrokeData, StrokeStack } from './lib/types'
   import {
-    generateUndoSuggestionsStream,
+    generateUndoSuggestionsStreamNew,
     type RedoSuggestion
-  } from './lib/ai_old/suggestions'
+  } from './lib/ai/features/redo_suggestion'
   import {
     loadProjectState,
     saveProjectState
@@ -142,7 +142,7 @@
     suggestions = []
     loadingSuggestions = true
     try {
-      const result = await generateUndoSuggestionsStream(context, current, {
+      const result = await generateUndoSuggestionsStreamNew(context, current, {
         onSuggestion: async (suggestion) => {
           if (requestId !== suggestionRequestId) return
           suggestions = [...suggestions, suggestion]
@@ -181,7 +181,7 @@
     suggestions = []
     loadingSuggestions = true
     try {
-      const result = await generateUndoSuggestionsStream(nextUndoneContext, strokes, {
+      const result = await generateUndoSuggestionsStreamNew(nextUndoneContext, strokes, {
         onSuggestion: async (suggestion) => {
           if (requestId !== suggestionRequestId) return
           suggestions = [...suggestions, suggestion]
@@ -411,6 +411,7 @@
       <div class="redo-panel">
         <SuggestionPanel
           {suggestions}
+          currentStrokes={strokes}
           {loadingSuggestions}
           {modelStatus}
           on:pick={((event) => applySuggestion(event.detail))}

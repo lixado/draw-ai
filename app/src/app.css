@@ -76,17 +76,59 @@ body {
 .palette-panel {
   width: 100%;
   background: #ffffff;
-  border: 1px solid #dbe5f0;
+  border: 1px solid #e2e8f0;
   border-radius: 14px;
-  padding: 10px;
+  padding: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.04);
 }
 
 .palette-panel h2 {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 0 0 8px;
+  margin: 0 0 10px;
   font-size: 0.92rem;
+  font-weight: 600;
+  color: #0f172a;
+  letter-spacing: -0.01em;
+}
+
+.palette-panel .dots {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.palette-panel .dot {
+  width: 100%;
+  aspect-ratio: 1;
+  height: auto;
+  min-height: 0;
+  border-radius: 5px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.35),
+    0 1px 2px rgba(15, 23, 42, 0.06);
+  padding: 0;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.palette-panel .dot:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.45),
+    0 3px 10px rgba(15, 23, 42, 0.12);
+  z-index: 1;
+}
+
+.palette-panel .dot:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+.palette-panel .dot:active {
+  transform: translateY(0);
 }
 
 .left-sliders {

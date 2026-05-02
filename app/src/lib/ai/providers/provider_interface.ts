@@ -6,9 +6,15 @@ export interface ProviderInterface {
   modelInit(apiKey: string | null): Promise<void> | void;
 
   /**
-   * Generates output text from a prompt string.
+   * Generates output from a system prompt (instructions / role) and a user prompt (task + data).
+   * Chat APIs use `systemPrompt` as the system message; local text models prepend it to the user text.
+   * Optional `maxNewTokens` caps generation length (local models); remote may ignore it.
    */
-  generate(prompt: string): Promise<string> | string;
+  generate(
+    systemPrompt: string,
+    prompt: string,
+    options?: { maxNewTokens?: number }
+  ): Promise<string> | string;
 
   /**
    * Cleans up provider resources when done or switching models.

@@ -4,7 +4,7 @@
   import BrushSelector from './drop_down_components/BrushSelector.svelte'
   import ColorDropDown from './drop_down_components/ColorDropDown.svelte'
   import LayerDropDown from './drop_down_components/LayerDropDown.svelte'
-  import ModelSelector from './ModelSelector.svelte'
+  import ModelDropDown from './drop_down_components/ModelDropDown.svelte'
   import ResolutionDropDown from './drop_down_components/ResolutionDropDown.svelte'
   import SaveDropDown from './drop_down_components/SaveDropDown.svelte'
   import { brushStyleOptions } from '../brush/brushStyleOptions'
@@ -50,12 +50,14 @@
   let isBrushMenuOpen = false
   let isSaveMenuOpen = false
   let isCanvasMenuOpen = false
+  let isModelMenuOpen = false
   let showLayerMenu = false
 
   let colorMenuRoot: HTMLDivElement | null = null
   let brushMenuRoot: HTMLDivElement | null = null
   let saveMenuRoot: HTMLDivElement | null = null
   let canvasMenuRoot: HTMLDivElement | null = null
+  let modelMenuRoot: HTMLDivElement | null = null
   let layerMenuRoot: HTMLDivElement | null = null
 
   const closeAllMenus = () => {
@@ -63,6 +65,7 @@
     isBrushMenuOpen = false
     isSaveMenuOpen = false
     isCanvasMenuOpen = false
+    isModelMenuOpen = false
     showLayerMenu = false
   }
 
@@ -87,6 +90,11 @@
       const canvasRoot = canvasMenuRoot
       if (canvasRoot && target && canvasRoot.contains(target)) return
       isCanvasMenuOpen = false
+    }
+    if (isModelMenuOpen) {
+      const modelRoot = modelMenuRoot
+      if (modelRoot && target && modelRoot.contains(target)) return
+      isModelMenuOpen = false
     }
     if (showLayerMenu) {
       const layerRoot = layerMenuRoot
@@ -176,7 +184,15 @@
       bind:canvasWidth
       bind:canvasHeight
     />
-    <ModelSelector />
+    <ModelDropDown
+      open={isModelMenuOpen}
+      onToggle={() => {
+        const nextOpen = !isModelMenuOpen
+        closeAllMenus()
+        isModelMenuOpen = nextOpen
+      }}
+      bind:rootEl={modelMenuRoot}
+    />
   </div>
 
   <div class="nav-title" aria-hidden="true">
